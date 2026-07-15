@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Markdown desktop editor powered by Vue and Tauri",
   "author": "chain-code",
+  "license": "MIT",
   "scripts": {
     "dev": "vite",
     "test": "npm run test:logic && npm run test:types && npm run test:components",

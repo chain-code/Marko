@@ -8,7 +8,7 @@ tags:
 # Marko
 
 > [!NOTE]
-> 这是一个模拟 Typora 编辑体验的首版 Markdown 桌面编辑器，文档展示风格参考 SoloLog。
+> Marko 提供所见即所得的连续编辑体验，文档展示风格参考 SoloLog。
 
 [TOC]
 

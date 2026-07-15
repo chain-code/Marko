@@ -62,7 +62,7 @@
                 <input type="checkbox" :checked="modelValue.autoSave" @change="update('autoSave', checkedValue($event))" />
               </label>
               <label class="setting-row" :class="{ disabled: !modelValue.autoSave }">
-                <span><strong>自动保存间隔</strong><small>与 Typora 一样按分钟定期写入磁盘</small></span>
+                <span><strong>自动保存间隔</strong><small>按分钟定期写入磁盘</small></span>
                 <select
                   class="field"
                   :value="modelValue.autoSaveIntervalMinutes"

@@ -202,3 +202,7 @@ scripts/             测试与 Tauri 启动脚本
 桌面端 PDF、HTML、DOCX、RTF 和 EPUB 导出均需要本机安装 [Pandoc](https://pandoc.org/)。PDF 导出还需要 Pandoc 可用的 PDF 引擎，通常是 LaTeX 环境；缺少依赖时应用会显示对应错误。
 
 已确认暂不实现或仍待处理的 Typora 差异见 [TODO.md](./TODO.md)。
+
+## 许可证
+
+本项目采用 [MIT License](./LICENSE)，版权所有 (c) 2026 chain-code。
