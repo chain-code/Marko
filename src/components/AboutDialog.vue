@@ -13,7 +13,7 @@
         <span class="app-mark" aria-hidden="true">M</span>
         <div>
           <h2 id="about-title">Marko</h2>
-          <p>版本 0.1.0</p>
+          <p>版本 1.1.0</p>
         </div>
       </header>
       <p id="about-description" class="description">

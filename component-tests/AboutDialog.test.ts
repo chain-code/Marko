@@ -9,7 +9,7 @@ describe("AboutDialog", () => {
 
     expect(wrapper.get('[role="dialog"]').attributes("aria-modal")).toBe("true");
     expect(wrapper.text()).toContain("Marko");
-    expect(wrapper.text()).toContain("版本 0.1.0");
+    expect(wrapper.text()).toContain("版本 1.1.0");
     expect(document.activeElement).toBe(wrapper.get("button").element);
 
     wrapper.unmount();

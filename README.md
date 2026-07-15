@@ -4,6 +4,8 @@ Marko 是基于 Vue 3、CodeMirror 6 与 Tauri 2 构建的 Markdown 桌面编辑
 
 当前支持 Windows 10/11 x64 和 Apple Silicon macOS 11+，分别提供 NSIS 与原生 `.app`/DMG 打包脚本。
 
+最新安装资源与版本说明见 [GitHub Releases](https://github.com/chain-code/Marko/releases/latest)。
+
 ## 核心特性
 
 ### 连续编辑体验

@@ -19,6 +19,11 @@ test("desktop bundle selects native package formats for Windows and macOS", () =
   );
 });
 
+test("desktop bundles include the project license", () => {
+  assert.deepEqual(tauriConfig.bundle.resources, { "../LICENSE": "LICENSE" });
+  assert.match(readFileSync(resolve("LICENSE"), "utf8"), /MIT License/);
+});
+
 test("Windows bundle registers Marko as a Markdown editor", () => {
   const associations = tauriConfig.bundle.fileAssociations;
   assert.ok(Array.isArray(associations));
