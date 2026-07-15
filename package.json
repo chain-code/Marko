@@ -16,7 +16,8 @@
     "preview": "vite preview",
     "tauri:dev": "node scripts/run-tauri.mjs dev",
     "tauri:build": "node scripts/run-tauri.mjs build",
-    "pack:win": "npm run build && node scripts/run-tauri.mjs build --bundles nsis --target x86_64-pc-windows-msvc"
+    "pack:win": "npm run build && node scripts/run-tauri.mjs build --bundles nsis --target x86_64-pc-windows-msvc",
+    "pack:mac-arm": "node scripts/run-tauri.mjs build --bundles app,dmg --target aarch64-apple-darwin"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",

@@ -196,7 +196,7 @@ import {
   type EmojiCompletionRange,
 } from "@/utils/continuousEditor";
 import { splitMarkdownBlocks } from "@/utils/editorBlocks";
-import { resolveEditorShortcut } from "@/utils/keyboardShortcuts";
+import { getKeyboardShortcutPlatform, resolveEditorShortcut } from "@/utils/keyboardShortcuts";
 import { getEmojiSuggestions, renderMarkdown } from "@/utils/markdown";
 import { findMarkdownLinkAtCursor } from "@/utils/markdownLinks";
 import { shouldOpenPreviewLink } from "@/utils/previewLinks";
@@ -954,7 +954,7 @@ function handleEditorKeydown(event: KeyboardEvent, view: EditorView): boolean {
     return false;
   }
   if (event.key !== "Escape" && !isModifierKey(event.key)) allowNextTabFocus = false;
-  const shortcut = resolveEditorShortcut(event);
+  const shortcut = resolveEditorShortcut(event, getKeyboardShortcutPlatform());
   if (shortcut) {
     event.preventDefault();
     runShortcut(shortcut);

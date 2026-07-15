@@ -161,7 +161,7 @@ import {
 } from "@/utils/editorContextMenu";
 import { insertFrontMatterSnippet } from "@/utils/snippets";
 import { indentSelection, replaceBlock, splitMarkdownBlocks, type MarkdownBlock } from "@/utils/editorBlocks";
-import { resolveEditorShortcut } from "@/utils/keyboardShortcuts";
+import { getKeyboardShortcutPlatform, resolveEditorShortcut } from "@/utils/keyboardShortcuts";
 import { getDocumentBoundaryOffset } from "@/utils/textPosition";
 import {
   alignMarkdownTable,
@@ -507,7 +507,7 @@ function handleKeydown(event: KeyboardEvent) {
   const textarea = getCurrentTextarea();
   if (!textarea) return;
 
-  const shortcut = resolveEditorShortcut(event);
+  const shortcut = resolveEditorShortcut(event, getKeyboardShortcutPlatform());
   if (shortcut) {
     event.preventDefault();
     runShortcut(shortcut);

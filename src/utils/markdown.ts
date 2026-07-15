@@ -1741,6 +1741,11 @@ function resolvePathLike(source: string, basePath?: string): string {
   }
 
   const normalizedBase = basePath.replace(/\\/g, "/");
+  const rootPrefix = normalizedBase.startsWith("//")
+    ? "//"
+    : normalizedBase.startsWith("/")
+      ? "/"
+      : "";
   const baseDir = normalizedBase.includes("/")
     ? normalizedBase.slice(0, normalizedBase.lastIndexOf("/"))
     : "";
@@ -1760,7 +1765,7 @@ function resolvePathLike(source: string, basePath?: string): string {
     return `${result[0]}/${result.slice(1).join("/")}`;
   }
 
-  return result.join("/");
+  return `${rootPrefix}${result.join("/")}`;
 }
 
 function isAbsolutePath(source: string): boolean {

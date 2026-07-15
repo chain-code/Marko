@@ -121,7 +121,7 @@ import {
 } from "@/utils/editorCommands";
 import { findMarkdownLinkAtCursor } from "@/utils/markdownLinks";
 import { shouldOpenPreviewLink } from "@/utils/previewLinks";
-import { resolveEditorShortcut } from "@/utils/keyboardShortcuts";
+import { getKeyboardShortcutPlatform, resolveEditorShortcut } from "@/utils/keyboardShortcuts";
 import {
   alignVisualTableColumn,
   deleteVisualTableColumn,
@@ -316,7 +316,7 @@ function updateCell(row: number, column: number, event: Event) {
 function handleCellKeydown(row: number, column: number, event: KeyboardEvent) {
   if (event.isComposing || event.keyCode === 229) return;
   captureCellSelection(row, column, event);
-  const shortcut = resolveEditorShortcut(event);
+  const shortcut = resolveEditorShortcut(event, getKeyboardShortcutPlatform());
   if (shortcut) {
     event.preventDefault();
     if (shortcut.type === "command") {

@@ -14,7 +14,17 @@ export interface KeyboardShortcutState {
   altKey?: boolean;
 }
 
-export function resolveEditorShortcut(event: KeyboardShortcutState): EditorShortcutAction | null {
+export type KeyboardShortcutPlatform = "macos" | "other";
+
+export function getKeyboardShortcutPlatform(): KeyboardShortcutPlatform {
+  if (typeof navigator === "undefined") return "other";
+  return /^mac/i.test(navigator.platform) ? "macos" : "other";
+}
+
+export function resolveEditorShortcut(
+  event: KeyboardShortcutState,
+  platform: KeyboardShortcutPlatform = "other",
+): EditorShortcutAction | null {
   const key = normalizeShortcutKey(event.key);
 
   if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey) {
@@ -27,7 +37,7 @@ export function resolveEditorShortcut(event: KeyboardShortcutState): EditorShort
     }
   }
 
-  if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+  if (platform !== "macos" && event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
     switch (key) {
       case "ArrowUp":
         return { type: "command", command: "moveLineUp" };

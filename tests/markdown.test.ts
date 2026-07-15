@@ -307,6 +307,16 @@ test("renderMarkdown resolves Windows and UNC image paths like Typora", () => {
   assert.match(html, /<img src="asset:\/\/\/\/server\/share\/encoded\.png">/);
 });
 
+test("renderMarkdown preserves the POSIX root for relative image paths on macOS", () => {
+  const html = renderMarkdown('<img src="../assets/logo.png">', {
+    settings,
+    basePath: "/Users/marko/Documents/notes/current.md",
+    assetResolver: (path) => `asset://${path}`,
+  });
+
+  assert.match(html, /<img src="asset:\/\/\/Users\/marko\/Documents\/assets\/logo\.png">/);
+});
+
 test("renderMarkdown blocks unsafe raw html image sources", () => {
   const html = renderMarkdown(
     '<img src="javascript:alert(1)" alt="Bad"><img src="data:text/html,hi"><img src="data:image/png;base64,abc">',

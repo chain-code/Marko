@@ -191,3 +191,10 @@ test("resolveEditorShortcut ignores non-editor modifier combinations", () => {
   assert.equal(resolveEditorShortcut({ key: "1", ctrlKey: true, altKey: true }), null);
   assert.equal(resolveEditorShortcut({ key: "y", ctrlKey: true, shiftKey: true }), null);
 });
+
+test("resolveEditorShortcut preserves macOS Option arrow navigation", () => {
+  assert.equal(resolveEditorShortcut({ key: "ArrowLeft", altKey: true }, "macos"), null);
+  assert.equal(resolveEditorShortcut({ key: "ArrowRight", altKey: true }, "macos"), null);
+  assert.equal(resolveEditorShortcut({ key: "ArrowUp", altKey: true }, "macos"), null);
+  assert.equal(resolveEditorShortcut({ key: "ArrowDown", altKey: true }, "macos"), null);
+});
