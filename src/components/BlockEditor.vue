@@ -10,11 +10,13 @@
     :style="editorStyle"
     @dragover.prevent
     @drop.prevent="handleDrop"
+    @contextmenu.prevent="openEditorContextMenu"
   >
     <textarea
       v-if="settings.sourceMode"
       ref="sourceTextareaRef"
       class="source-editor"
+      lang="en"
       :value="modelValue"
       :spellcheck="settings.spellcheck"
       @input="handleSourceInput"
@@ -28,17 +30,48 @@
     <template v-else>
       <div
         v-for="block in blocks"
-        :key="`${block.start}-${block.index}`"
+        :key="block.index"
         class="editor-block"
-        :class="[`block-${block.type}`, { active: block.index === activeIndex }]"
+        :class="[
+          'block-' + block.type,
+          { active: block.index === activeIndex || block.index === activeRichIndex || block.index === activeTableIndex },
+        ]"
         :data-block-index="block.index"
-        @click="activateBlock(block.index)"
+        @click="activateSourceBlock(block)"
       >
+        <VisualTableEditor
+          v-if="block.type === 'table' && block.index !== activeIndex"
+          :ref="(editor) => setTableEditorRef(block.index, editor)"
+          :source="block.raw"
+          :document-source="modelValue"
+          :file-path="filePath"
+          :outline="outline"
+          :settings="settings"
+          @update="replaceBlockSource(block.index, $event)"
+          @delete="deleteVisualBlock(block.index)"
+          @focus="activateTableBlock(block.index)"
+          @selection="emitVisualSelection(block, $event)"
+          @open-link="emit('openLinkHref', $event)"
+        />
+        <RichMarkdownBlock
+          v-else-if="block.index !== activeIndex && isRichEditableBlock(block)"
+          :ref="(editor) => setRichEditorRef(block.index, editor)"
+          :source="block.raw"
+          :document-source="modelValue"
+          :file-path="filePath"
+          :outline="outline"
+          :settings="settings"
+          @update="replaceBlockSource(block.index, $event)"
+          @focus="activateRichBlock(block.index)"
+          @selection="emitVisualSelection(block, $event)"
+          @open-link="emit('openLinkHref', $event)"
+        />
         <textarea
-          v-if="block.index === activeIndex"
+          v-else-if="block.index === activeIndex"
           :ref="setActiveTextareaRef"
           v-model="activeDraft"
           class="block-source"
+          lang="en"
           :spellcheck="settings.spellcheck"
           @input="handleActiveInput"
           @keydown="handleKeydown"
@@ -57,6 +90,8 @@
           :settings="settings"
           @toggle-task="toggleTaskInBlock(block.index, $event)"
           @replace-source="replaceBlockSource(block.index, $event)"
+          @open-link="emit('openLink', $event)"
+          @open-anchor="emit('openLinkHref', $event)"
         />
       </div>
     </template>
@@ -73,14 +108,121 @@
         <span>:{{ item.code }}:</span>
       </button>
     </div>
+
+    <div
+      v-if="contextMenu"
+      class="editor-context-menu"
+      :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+      role="menu"
+      @click.stop
+      @contextmenu.prevent
+    >
+      <template v-for="(item, index) in contextMenu.items" :key="`editor-context-${index}`">
+        <div v-if="item.type === 'separator'" class="context-menu-separator" />
+        <button
+          v-else
+          type="button"
+          class="context-menu-item"
+          role="menuitem"
+          @click="runEditorContextMenuCommand(item.command)"
+        >
+          <component :is="contextActionIcon(item.command)" />
+          <span>{{ item.label }}</span>
+          <small v-if="item.shortcut">{{ item.shortcut }}</small>
+        </button>
+      </template>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import {
+  Bold,
+  ClipboardPaste,
+  Code,
+  Copy,
+  Italic,
+  Link,
+  Redo2,
+  RemoveFormatting,
+  Scissors,
+  TextSelect,
+  Undo2,
+} from "lucide-vue-next";
 import MarkdownPreview from "@/components/MarkdownPreview.vue";
+import RichMarkdownBlock from "@/components/RichMarkdownBlock.vue";
+import VisualTableEditor from "@/components/VisualTableEditor.vue";
 import { getEmojiSuggestions } from "@/utils/markdown";
+import {
+  clampEditorContextMenuPosition,
+  editorContextMenuItems,
+  type EditorContextMenuItem,
+} from "@/utils/editorContextMenu";
+import { insertFrontMatterSnippet } from "@/utils/snippets";
 import { indentSelection, replaceBlock, splitMarkdownBlocks, type MarkdownBlock } from "@/utils/editorBlocks";
+import { resolveEditorShortcut } from "@/utils/keyboardShortcuts";
+import { getDocumentBoundaryOffset } from "@/utils/textPosition";
+import {
+  alignMarkdownTable,
+  adjustHeadingLevel,
+  applyMarkdownSpaceShortcut,
+  applyAutoPair,
+  clearMarkdownFormatting,
+  continueMarkdownBlock,
+  deleteCurrentWord,
+  deleteCurrentParagraph,
+  deleteCurrentSentence,
+  deleteCurrentStyleScope,
+  deleteMarkdownTable,
+  deleteMarkdownLines,
+  deleteMarkdownTablePart,
+  duplicateMarkdownLines,
+  editMarkdownTable,
+  formatMarkdownCodeBlock,
+  formatMarkdownMathBlock,
+  formatMarkdownLines,
+  getSelectedMarkdownHtml,
+  getSelectedMarkdownSource,
+  getPlainTextFromMarkdownSelection,
+  getSelectAllTarget,
+  insertMarkdownCalloutTemplate,
+  insertMarkdownDiagramTemplate,
+  insertMarkdownFootnoteTemplate,
+  insertMarkdownHorizontalRule,
+  insertMarkdownImageSelection,
+  insertMarkdownLinkSelection,
+  insertMarkdownSoftBreak,
+  insertMarkdownTableTemplate,
+  insertMarkdownTableColumn,
+  insertMarkdownTableRow,
+  insertMarkdownTocTemplate,
+  insertMarkdownAtSelection,
+  moveMarkdownLines,
+  moveMarkdownTableColumn,
+  moveMarkdownTableRow,
+  navigateMarkdownTableCell,
+  outdentMarkdownListOnBackspace,
+  pasteMarkdownContent,
+  pastePlainMarkdownText,
+  removeAutoPairOnBackspace,
+  selectCurrentLine,
+  selectCurrentParagraph,
+  selectCurrentSentence,
+  selectCurrentStyleScope,
+  selectCurrentWord,
+  selectMarkdownTablePart,
+  setHeadingLevel,
+  setImageWidthInLine,
+  setParagraphText,
+  toggleMarkdownTaskByOrder,
+  toggleTaskAtSelection,
+  unwrapMarkdownBlockOnBackspace,
+  wrapHtmlCommentSelection,
+  wrapMarkdownSelection,
+  type TextEditResult,
+} from "@/utils/editorCommands";
+import { findMarkdownLinkAtCursor } from "@/utils/markdownLinks";
 import { calculateSelectionStats } from "@/utils/stats";
 import type { EditorCommand, EditorSettings, ImagePayload, OutlineItem, SelectionStats } from "@/types";
 
@@ -94,21 +236,50 @@ const props = defineProps<{
 const emit = defineEmits<{
   "update:modelValue": [value: string];
   save: [];
+  saveAs: [];
   open: [];
   selection: [stats: SelectionStats];
   imageData: [payload: ImagePayload];
+  openLink: [path: string];
+  openLinkHref: [href: string];
+  missingLink: [];
+  requestSourceSelection: [start: number, end: number];
 }>();
 
 const surfaceRef = ref<HTMLElement | null>(null);
 const activeTextareaRef = ref<HTMLTextAreaElement | null>(null);
 const sourceTextareaRef = ref<HTMLTextAreaElement | null>(null);
 const activeIndex = ref<number | null>(null);
+const activeRichIndex = ref<number | null>(null);
+const activeTableIndex = ref<number | null>(null);
+const richEditorRefs = new Map<number, InstanceType<typeof RichMarkdownBlock>>();
+const tableEditorRefs = new Map<number, InstanceType<typeof VisualTableEditor>>();
 const activeDraft = ref("");
 const activeRange = ref<{ start: number; end: number } | null>(null);
 const pendingCommand = ref<{ command: EditorCommand; payload?: string } | null>(null);
 const pendingInsert = ref("");
 const emojiQuery = ref("");
 const emojiRange = ref<{ start: number; end: number } | null>(null);
+const contextMenu = ref<{ items: EditorContextMenuItem[]; x: number; y: number } | null>(null);
+
+const contextActionIcons: Partial<Record<EditorCommand, unknown>> = {
+  undo: Undo2,
+  redo: Redo2,
+  cut: Scissors,
+  copy: Copy,
+  paste: ClipboardPaste,
+  pastePlainText: ClipboardPaste,
+  copyMarkdown: Copy,
+  copyHtml: Copy,
+  copyPlainText: Copy,
+  selectAll: TextSelect,
+  link: Link,
+  openLink: Link,
+  bold: Bold,
+  italic: Italic,
+  inlineCode: Code,
+  clearFormat: RemoveFormatting,
+};
 
 const blocks = computed(() => splitMarkdownBlocks(props.modelValue));
 const emojiSuggestions = computed(() => (emojiQuery.value ? getEmojiSuggestions(emojiQuery.value) : []));
@@ -116,6 +287,7 @@ const emojiSuggestions = computed(() => (emojiQuery.value ? getEmojiSuggestions(
 const editorStyle = computed(() => ({
   "--reading-max-width": `${props.settings.lineWidth}px`,
   "--editor-font-size": `${props.settings.fontSize}px`,
+  "--editor-tab-size": String(props.settings.indentSize),
 }));
 
 watch(activeIndex, async (index) => {
@@ -147,11 +319,101 @@ watch(
   },
 );
 
+onMounted(() => {
+  window.addEventListener("click", closeEditorContextMenu);
+  window.addEventListener("keydown", handleEditorContextMenuKeydown);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("click", closeEditorContextMenu);
+  window.removeEventListener("keydown", handleEditorContextMenuKeydown);
+});
+
 function activateBlock(index: number) {
+  activeRichIndex.value = null;
+  activeTableIndex.value = null;
   activeIndex.value = index;
 }
 
-function setActiveTextareaRef(element: Element | null) {
+function activateSourceBlock(block: MarkdownBlock) {
+  if (block.type === "table" || isRichEditableBlock(block)) return;
+  activateBlock(block.index);
+}
+
+function activateRichBlock(index: number) {
+  activeIndex.value = null;
+  activeTableIndex.value = null;
+  activeRichIndex.value = index;
+}
+
+function activateTableBlock(index: number) {
+  activeIndex.value = null;
+  activeRichIndex.value = null;
+  activeTableIndex.value = index;
+}
+
+function setRichEditorRef(index: number, editor: unknown) {
+  if (editor) {
+    richEditorRefs.set(index, editor as InstanceType<typeof RichMarkdownBlock>);
+  } else {
+    richEditorRefs.delete(index);
+  }
+}
+
+function setTableEditorRef(index: number, editor: unknown) {
+  if (editor) {
+    tableEditorRefs.set(index, editor as InstanceType<typeof VisualTableEditor>);
+  } else {
+    tableEditorRefs.delete(index);
+  }
+}
+
+function isRichEditableBlock(block: MarkdownBlock) {
+  if (!["paragraph", "heading", "list", "task", "quote", "definition"].includes(block.type)) return false;
+  return !/(^|\n)\s*\[TOC\]\s*(?:\n|$)/i.test(block.raw)
+    && !/(^|\n)\s*>\s*\[![A-Z]+\]/.test(block.raw)
+    && !/\[\^[^\]]+\]/.test(block.raw)
+    && !/(^|[^\\])\$[^\n$]+\$/.test(block.raw)
+    && !/\\\([^\n]+\\\)/.test(block.raw);
+}
+
+function deleteVisualBlock(blockIndex: number) {
+  const block = blocks.value[blockIndex];
+  if (!block) return;
+  replaceBlockSource(blockIndex, block.raw.match(/\s+$/)?.[0] ?? "");
+  activeTableIndex.value = null;
+}
+
+function emitVisualSelection(block: MarkdownBlock, selected: string) {
+  const localStart = selected ? Math.max(0, block.raw.indexOf(selected)) : 0;
+  const selectionStart = block.start + localStart;
+  const selectionEnd = selectionStart + selected.length;
+  emitSelectionFromText(selected, selectionStart, selectionEnd);
+}
+
+function tryRunVisualCommand(command: EditorCommand, payload?: string): boolean {
+  if (activeTableIndex.value !== null) {
+    const editor = tableEditorRefs.get(activeTableIndex.value);
+    if (editor?.runCommand(command, payload)) return true;
+  }
+
+  if (activeRichIndex.value !== null) {
+    const editor = richEditorRefs.get(activeRichIndex.value);
+    if (editor?.runCommand(command, payload)) return true;
+  }
+
+  return false;
+}
+
+function queueVisualSourceCommand(command: EditorCommand, payload?: string): boolean {
+  const index = activeRichIndex.value ?? activeTableIndex.value;
+  if (index === null || !blocks.value[index]) return false;
+  pendingCommand.value = { command, payload };
+  activateBlock(index);
+  return true;
+}
+
+function setActiveTextareaRef(element: unknown) {
   activeTextareaRef.value = element instanceof HTMLTextAreaElement ? element : null;
 }
 
@@ -166,7 +428,8 @@ function handleActiveInput(event: Event) {
   emit("update:modelValue", next);
   resizeTextarea(textarea);
   updateEmojiState(textarea);
-  if (props.settings.typewriterMode) {
+  emitSelectionFromActive();
+  if (props.settings.typewriterMode && props.settings.typewriterCenter) {
     centerActiveBlock();
   }
 }
@@ -175,6 +438,7 @@ function handleSourceInput(event: Event) {
   const textarea = event.target as HTMLTextAreaElement;
   emit("update:modelValue", textarea.value);
   updateEmojiState(textarea);
+  emitSelectionFromSource();
 }
 
 function handleActiveBlur() {
@@ -186,76 +450,197 @@ function handleActiveBlur() {
   }, 80);
 }
 
+function openEditorContextMenu(event: MouseEvent) {
+  activateContextMenuBlock(event);
+  const position = clampEditorContextMenuPosition(
+    event.clientX,
+    event.clientY,
+    window.innerWidth,
+    window.innerHeight,
+    editorContextMenuItems.length,
+  );
+
+  contextMenu.value = {
+    items: editorContextMenuItems,
+    ...position,
+  };
+}
+
+function activateContextMenuBlock(event: MouseEvent) {
+  if (props.settings.sourceMode || event.target instanceof HTMLTextAreaElement) return;
+
+  const target = event.target instanceof Element ? event.target : null;
+  const block = target?.closest<HTMLElement>(".editor-block");
+  const index = Number(block?.dataset.blockIndex);
+  const markdownBlock = blocks.value[index];
+  if (!Number.isInteger(index) || !markdownBlock) return;
+  if (markdownBlock.type === "table") {
+    activateTableBlock(index);
+  } else if (isRichEditableBlock(markdownBlock)) {
+    activateRichBlock(index);
+  } else {
+    activateBlock(index);
+  }
+}
+
+async function runEditorContextMenuCommand(command: EditorCommand) {
+  closeEditorContextMenu();
+  await nextTick();
+  runCommand(command);
+}
+
+function contextActionIcon(command: EditorCommand): unknown {
+  return contextActionIcons[command] ?? Copy;
+}
+
+function closeEditorContextMenu() {
+  contextMenu.value = null;
+}
+
+function handleEditorContextMenuKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") {
+    closeEditorContextMenu();
+  }
+}
+
 function handleKeydown(event: KeyboardEvent) {
   const textarea = getCurrentTextarea();
   if (!textarea) return;
 
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+  const shortcut = resolveEditorShortcut(event);
+  if (shortcut) {
     event.preventDefault();
-    emit("save");
+    runShortcut(shortcut);
     return;
   }
 
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "o") {
+  if (event.key === "Escape" && props.settings.emojiAutocomplete === "escape") {
     event.preventDefault();
-    emit("open");
-    return;
+    if (updateEmojiState(textarea, true)) return;
   }
 
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") {
+  if (event.key === "Escape" && !props.settings.sourceMode) {
     event.preventDefault();
-    runCommand("bold");
-    return;
-  }
-
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "i") {
-    event.preventDefault();
-    runCommand("italic");
-    return;
-  }
-
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-    event.preventDefault();
-    runCommand("link");
+    activeIndex.value = null;
+    emojiQuery.value = "";
+    emojiRange.value = null;
     return;
   }
 
   if (event.key === "Tab") {
     event.preventDefault();
+    if (navigateTableCell(textarea, event.shiftKey ? "previous" : "next")) {
+      return;
+    }
     applyIndent(event.shiftKey);
     return;
   }
 
-  if (event.key === "Enter" && continueList(textarea)) {
+  if (event.key === "Enter" && event.shiftKey) {
+    event.preventDefault();
+    insertSoftBreak(textarea);
+    return;
+  }
+
+  if (event.key === "Enter" && continueBlock(textarea)) {
     event.preventDefault();
     return;
   }
 
-  if (props.settings.autoPair && !event.ctrlKey && !event.metaKey && !event.altKey) {
-    const pairs: Record<string, string> = {
-      "(": ")",
-      "[": "]",
-      "{": "}",
-      '"': '"',
-      "'": "'",
-      "`": "`",
-    };
-    const close = pairs[event.key];
-    if (close) {
+  if (event.key === " " && applySpaceShortcut(textarea)) {
+    event.preventDefault();
+    return;
+  }
+
+  if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key === "Backspace") {
+    const result = outdentMarkdownListOnBackspace({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    });
+    if (result) {
       event.preventDefault();
-      wrapSelection(event.key, close, "");
+      applyTextEdit(textarea, result);
+      return;
+    }
+
+    const blockResult = unwrapMarkdownBlockOnBackspace({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    });
+    if (blockResult) {
+      event.preventDefault();
+      applyTextEdit(textarea, blockResult);
+      return;
+    }
+  }
+
+  if (props.settings.autoPair && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    if (event.key === "Backspace") {
+      const result = removeAutoPairOnBackspace({
+        value: textarea.value,
+        selectionStart: textarea.selectionStart,
+        selectionEnd: textarea.selectionEnd,
+      });
+      if (result) {
+        event.preventDefault();
+        applyTextEdit(textarea, result);
+      }
+      return;
+    }
+
+    const result = applyAutoPair({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }, event.key);
+    if (result) {
+      event.preventDefault();
+      applyTextEdit(textarea, result);
     }
   }
 }
 
+function runShortcut(shortcut: ReturnType<typeof resolveEditorShortcut>) {
+  if (!shortcut) return;
+  switch (shortcut.type) {
+    case "save":
+      emit("save");
+      break;
+    case "saveAs":
+      emit("saveAs");
+      break;
+    case "open":
+      emit("open");
+      break;
+    case "command":
+      runCommand(shortcut.command);
+      break;
+    default:
+      break;
+  }
+}
+
 function runCommand(command: EditorCommand, payload?: string) {
+  if (tryRunVisualCommand(command, payload)) {
+    return;
+  }
+
+  if (command === "copy" && props.settings.copyMarkdownAsPlainText) {
+    void copyMarkdownSource();
+    return;
+  }
+
   if (["undo", "redo", "copy", "cut", "paste"].includes(command)) {
     document.execCommand(command);
     return;
   }
 
   if (!getCurrentTextarea() && !props.settings.sourceMode) {
-    queueCommand(command, payload);
+    if (!queueVisualSourceCommand(command, payload)) {
+      queueCommand(command, payload);
+    }
     return;
   }
 
@@ -266,6 +651,12 @@ function runCommand(command: EditorCommand, payload?: string) {
     case "paragraph":
       setParagraph();
       break;
+    case "increaseHeading":
+      adjustHeading("increase");
+      break;
+    case "decreaseHeading":
+      adjustHeading("decrease");
+      break;
     case "heading1":
       setHeading(1);
       break;
@@ -275,17 +666,104 @@ function runCommand(command: EditorCommand, payload?: string) {
     case "heading3":
       setHeading(3);
       break;
+    case "heading4":
+      setHeading(4);
+      break;
+    case "heading5":
+      setHeading(5);
+      break;
+    case "heading6":
+      setHeading(6);
+      break;
+    case "selectLine":
+      selectLine();
+      break;
+    case "selectParagraph":
+      selectParagraph();
+      break;
+    case "selectSentence":
+      selectSentence();
+      break;
+    case "selectWord":
+      selectWord();
+      break;
+    case "goToDocumentStart":
+      void selectDocumentBoundary("start");
+      break;
+    case "goToDocumentEnd":
+      void selectDocumentBoundary("end");
+      break;
+    case "deleteWord":
+      deleteWord();
+      break;
+    case "deleteSentence":
+      deleteSentence();
+      break;
+    case "deleteParagraph":
+      deleteParagraph();
+      break;
+    case "deleteStyleScope":
+      deleteStyleScope();
+      break;
+    case "copyMarkdown":
+      void copyMarkdownSource();
+      break;
+    case "copyHtml":
+      void copyHtmlSource();
+      break;
+    case "copyPlainText":
+      void copyPlainTextSource();
+      break;
+    case "pastePlainText":
+      void pastePlainTextFromClipboard();
+      break;
+    case "duplicateLine":
+      duplicateLines();
+      break;
+    case "deleteLine":
+      deleteLines();
+      break;
+    case "moveLineUp":
+      moveLines("up");
+      break;
+    case "moveLineDown":
+      moveLines("down");
+      break;
+    case "selectAll":
+      selectAllText();
+      break;
+    case "selectStyleScope":
+      selectStyleScope();
+      break;
+    case "indent":
+      applyIndent(false);
+      break;
+    case "outdent":
+      applyIndent(true);
+      break;
     case "bold":
       wrapSelection("**", "**", "加粗文本");
       break;
     case "italic":
       wrapSelection("*", "*", "斜体文本");
       break;
+    case "underline":
+      wrapSelection("<u>", "</u>", "下划线文本");
+      break;
     case "strike":
       wrapSelection("~~", "~~", "删除线文本");
       break;
     case "inlineCode":
       wrapSelection("`", "`", "code");
+      break;
+    case "inlineMath":
+      wrapSelection("$", "$", "a^2 + b^2 = c^2");
+      break;
+    case "mathBlock":
+      setMathBlock();
+      break;
+    case "footnote":
+      insertFootnoteTemplate();
       break;
     case "highlight":
       wrapSelection("==", "==", "高亮文本");
@@ -296,41 +774,98 @@ function runCommand(command: EditorCommand, payload?: string) {
     case "subscript":
       wrapSelection("~", "~", "下标");
       break;
+    case "comment":
+      wrapComment();
+      break;
+    case "clearFormat":
+      clearFormat();
+      break;
     case "link":
-      wrapSelection("[", "](https://example.com)", "链接文本");
+      insertLink();
+      break;
+    case "openLink":
+      openCurrentLink();
       break;
     case "image":
-      insertAtCursor("\n![图片描述](image-path)\n");
+      insertImage();
       break;
     case "blockquote":
-      prefixLines("> ");
+      setLineFormat("blockquote");
       break;
     case "bulletList":
-      prefixLines("- ");
+      setLineFormat("bullet");
       break;
     case "orderedList":
-      prefixNumberedLines();
+      setLineFormat("ordered");
       break;
     case "taskList":
-      prefixLines("- [ ] ");
+      setLineFormat("task");
+      break;
+    case "definitionList":
+      setLineFormat("definition");
       break;
     case "toggleTask":
       toggleCurrentTask();
       break;
     case "hr":
-      insertAtCursor("\n---\n");
+      insertHorizontalRule();
       break;
     case "codeBlock":
-      insertAtCursor("\n```ts\n// 在这里编写代码\n```\n");
+      setCodeBlock();
       break;
     case "table":
-      insertAtCursor("\n| 列 1 | 列 2 | 列 3 |\n| --- | :---: | --- |\n| 内容 | 内容 | 内容 |\n");
+      insertTableTemplate();
       break;
     case "addTableRow":
       editTable("row");
       break;
     case "addTableColumn":
       editTable("column");
+      break;
+    case "addTableRowAbove":
+      insertTableRow("above");
+      break;
+    case "addTableRowBelow":
+      insertTableRow("below");
+      break;
+    case "addTableColumnLeft":
+      insertTableColumn("left");
+      break;
+    case "addTableColumnRight":
+      insertTableColumn("right");
+      break;
+    case "moveTableRowUp":
+      moveTableRow("up");
+      break;
+    case "moveTableRowDown":
+      moveTableRow("down");
+      break;
+    case "moveTableColumnLeft":
+      moveTableColumn("left");
+      break;
+    case "moveTableColumnRight":
+      moveTableColumn("right");
+      break;
+    case "selectTableCell":
+      selectTable("cell");
+      break;
+    case "selectTableRow":
+      selectTable("row");
+      break;
+    case "selectTableColumn":
+      selectTable("column");
+      break;
+    case "selectTable":
+      selectTable("table");
+      break;
+    case "deleteTableRow":
+      deleteTable("row");
+      break;
+    case "deleteTableColumn":
+      deleteTable("column");
+      break;
+    case "deleteTable":
+      deleteWholeTable();
       break;
     case "alignLeft":
       alignTable("left");
@@ -342,19 +877,19 @@ function runCommand(command: EditorCommand, payload?: string) {
       alignTable("right");
       break;
     case "toc":
-      insertAtCursor("\n[TOC]\n");
+      insertTocTemplate();
       break;
     case "frontmatter":
-      insertAtCursor("---\ntitle: 新文档\ndate: 2026-05-25\n---\n\n");
+      insertFrontMatter();
       break;
     case "callout":
-      insertAtCursor("\n> [!NOTE]\n> 在这里编写提示内容。\n");
+      insertCalloutTemplate();
       break;
     case "mermaid":
-      insertAtCursor("\n```mermaid\nflowchart LR\n  A[开始] --> B[结束]\n```\n");
+      insertDiagramTemplate("mermaid");
       break;
     case "flowchart":
-      insertAtCursor("\n```flowchart\nst=>start: 开始\ne=>end: 结束\nst->e\n```\n");
+      insertDiagramTemplate("flowchart");
       break;
     case "setImageWidth":
       setImageWidth(payload);
@@ -372,14 +907,89 @@ function insertText(text: string) {
   insertAtCursor(text);
 }
 
+function openCurrentLink() {
+  const textarea = ensureTextarea();
+  if (!textarea) {
+    emit("missingLink");
+    return;
+  }
+
+  const baseOffset = props.settings.sourceMode ? 0 : (activeRange.value?.start ?? 0);
+  const link = findMarkdownLinkAtCursor(
+    props.modelValue,
+    baseOffset + textarea.selectionStart,
+    baseOffset + textarea.selectionEnd,
+  );
+  if (!link) {
+    emit("missingLink");
+    return;
+  }
+
+  emit("openLinkHref", link.href);
+}
+
+function insertFrontMatter() {
+  const result = insertFrontMatterSnippet(props.modelValue);
+  emit("update:modelValue", result.value);
+  window.setTimeout(() => {
+    void selectRange(result.selectionStart, result.selectionEnd);
+  }, 100);
+}
+
 defineExpose({
   runCommand,
   insertImageMarkdown,
   insertText,
+  selectRange,
+  jumpToSelection,
   focus() {
     ensureTextarea()?.focus();
   },
 });
+
+async function selectRange(start: number, end: number) {
+  if (props.settings.sourceMode) {
+    await nextTick();
+    const textarea = sourceTextareaRef.value;
+    textarea?.focus();
+    textarea?.setSelectionRange(start, end);
+    return;
+  }
+
+  const block = blocks.value.find((item) => start >= item.start && start <= item.end) ?? blocks.value[0];
+  if (!block) return;
+
+  activeIndex.value = block.index;
+  await nextTick();
+  await nextTick();
+  const textarea = activeTextareaRef.value;
+  if (!textarea) return;
+
+  const localStart = Math.max(0, start - block.start);
+  const localEnd = Math.max(localStart, Math.min(block.raw.length, end - block.start));
+  textarea.focus();
+  textarea.setSelectionRange(localStart, localEnd);
+  emitSelectionFromText(
+    textarea.value.slice(localStart, localEnd),
+    block.start + localStart,
+    block.start + localEnd,
+  );
+}
+
+async function jumpToSelection() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  await nextTick();
+  textarea.focus();
+  const block = textarea.closest(".editor-block") ?? textarea;
+  block.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+async function selectDocumentBoundary(boundary: "start" | "end") {
+  const offset = getDocumentBoundaryOffset(props.modelValue, boundary);
+  await selectRange(offset, offset);
+  await jumpToSelection();
+}
 
 function ensureTextarea(): HTMLTextAreaElement | null {
   const textarea = getCurrentTextarea();
@@ -460,16 +1070,145 @@ function updateTextareaValue(textarea: HTMLTextAreaElement, value: string) {
   });
 }
 
+function applyTextEdit(textarea: HTMLTextAreaElement, result: TextEditResult) {
+  updateTextareaValue(textarea, result.value);
+  setSelection(textarea, result.selectionStart, result.selectionEnd);
+}
+
 function wrapSelection(before: string, after: string, placeholder: string) {
   const textarea = ensureTextarea();
   if (!textarea) return;
-  const value = textarea.value;
-  const start = textarea.selectionStart;
-  const end = textarea.selectionEnd;
-  const selected = value.slice(start, end) || placeholder;
-  const next = `${value.slice(0, start)}${before}${selected}${after}${value.slice(end)}`;
-  updateTextareaValue(textarea, next);
-  setSelection(textarea, start + before.length, start + before.length + selected.length);
+  applyTextEdit(
+    textarea,
+    wrapMarkdownSelection(
+      { value: textarea.value, selectionStart: textarea.selectionStart, selectionEnd: textarea.selectionEnd },
+      before,
+      after,
+      placeholder,
+    ),
+  );
+}
+
+function wrapComment() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    wrapHtmlCommentSelection({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
+}
+
+function insertLink() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    insertMarkdownLinkSelection({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
+}
+
+function insertImage() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    insertMarkdownImageSelection({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
+}
+
+function insertTableTemplate() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    insertMarkdownTableTemplate({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
+}
+
+function insertCalloutTemplate() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    insertMarkdownCalloutTemplate({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
+}
+
+function insertHorizontalRule() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    insertMarkdownHorizontalRule({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
+}
+
+function insertTocTemplate() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    insertMarkdownTocTemplate({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
+}
+
+function insertFootnoteTemplate() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  const range = props.settings.sourceMode ? null : activeRange.value;
+  const selectionStart = (range?.start ?? 0) + textarea.selectionStart;
+  const selectionEnd = (range?.start ?? 0) + textarea.selectionEnd;
+  const result = insertMarkdownFootnoteTemplate({
+    value: props.settings.sourceMode ? textarea.value : props.modelValue,
+    selectionStart,
+    selectionEnd,
+  });
+
+  emit("update:modelValue", result.value);
+  window.setTimeout(() => {
+    void selectRange(result.selectionStart, result.selectionEnd);
+  }, 100);
+}
+
+function insertDiagramTemplate(language: "mermaid" | "flowchart") {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    insertMarkdownDiagramTemplate({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }, language),
+  );
 }
 
 function insertAtCursor(text: string) {
@@ -480,134 +1219,440 @@ function insertAtCursor(text: string) {
 
   const textarea = ensureTextarea();
   if (!textarea) return;
-  const value = textarea.value;
-  const start = textarea.selectionStart;
-  const end = textarea.selectionEnd;
-  const next = `${value.slice(0, start)}${text}${value.slice(end)}`;
-  updateTextareaValue(textarea, next);
-  setSelection(textarea, start + text.length, start + text.length);
+  applyTextEdit(
+    textarea,
+    insertMarkdownAtSelection({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }, text),
+  );
 }
 
-function prefixLines(prefix: string) {
+function setLineFormat(format: "blockquote" | "bullet" | "ordered" | "task" | "definition") {
   const textarea = ensureTextarea();
   if (!textarea) return;
-  const { value, start, end, lineStart, normalizedEnd } = getLineRange(textarea);
-  const selected = value.slice(lineStart, normalizedEnd);
-  const nextSelected = selected
-    .split("\n")
-    .map((line) => (line.trim() ? `${prefix}${line}` : line))
-    .join("\n");
-  const next = `${value.slice(0, lineStart)}${nextSelected}${value.slice(normalizedEnd)}`;
-  updateTextareaValue(textarea, next);
-  setSelection(textarea, start + prefix.length, end + (nextSelected.length - selected.length));
+  applyTextEdit(
+    textarea,
+    formatMarkdownLines({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }, format),
+  );
 }
 
-function prefixNumberedLines() {
+function setHeading(level: 1 | 2 | 3 | 4 | 5 | 6) {
   const textarea = ensureTextarea();
   if (!textarea) return;
-  const { value, start, end, lineStart, normalizedEnd } = getLineRange(textarea);
-  const selected = value.slice(lineStart, normalizedEnd);
-  const nextSelected = selected
-    .split("\n")
-    .map((line, index) => (line.trim() ? `${index + 1}. ${line}` : line))
-    .join("\n");
-  const next = `${value.slice(0, lineStart)}${nextSelected}${value.slice(normalizedEnd)}`;
-  updateTextareaValue(textarea, next);
-  setSelection(textarea, start + 3, end + (nextSelected.length - selected.length));
+  applyTextEdit(
+    textarea,
+    setHeadingLevel({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }, level),
+  );
 }
 
-function setHeading(level: 1 | 2 | 3) {
+function adjustHeading(direction: "increase" | "decrease") {
   const textarea = ensureTextarea();
   if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    adjustHeadingLevel({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }, direction),
+  );
+}
 
-  const { value, start, end, lineStart, normalizedEnd } = getLineRange(textarea);
-  const selected = value.slice(lineStart, normalizedEnd);
-  const prefix = `${"#".repeat(level)} `;
-  const nextSelected = selected
-    .split("\n")
-    .map((line) => {
-      const content = line.replace(/^\s{0,3}#{1,6}\s+/, "");
-      return content.trim() ? `${prefix}${content}` : content;
-    })
-    .join("\n");
-  updateTextareaValue(textarea, `${value.slice(0, lineStart)}${nextSelected}${value.slice(normalizedEnd)}`);
-  setSelection(textarea, Math.min(start + prefix.length, lineStart + nextSelected.length), end + (nextSelected.length - selected.length));
+function clearFormat() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    clearMarkdownFormatting({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
 }
 
 function setParagraph() {
   const textarea = ensureTextarea();
   if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    setParagraphText({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
+}
 
-  const { value, start, end, lineStart, normalizedEnd } = getLineRange(textarea);
-  const selected = value.slice(lineStart, normalizedEnd);
-  const nextSelected = selected
-    .split("\n")
-    .map((line) => line.replace(/^\s{0,3}#{1,6}\s+/, ""))
-    .join("\n");
-  updateTextareaValue(textarea, `${value.slice(0, lineStart)}${nextSelected}${value.slice(normalizedEnd)}`);
-  setSelection(textarea, Math.max(lineStart, start - (selected.length - nextSelected.length)), end - (selected.length - nextSelected.length));
+function setCodeBlock() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    formatMarkdownCodeBlock({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }, props.settings.defaultCodeLanguage),
+  );
+}
+
+function setMathBlock() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    formatMarkdownMathBlock({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
 }
 
 function applyIndent(outdent: boolean) {
   const textarea = getCurrentTextarea();
   if (!textarea) return;
-  const result = indentSelection(textarea.value, textarea.selectionStart, textarea.selectionEnd, outdent);
+  const result = indentSelection(
+    textarea.value,
+    textarea.selectionStart,
+    textarea.selectionEnd,
+    outdent,
+    props.settings.indentSize,
+  );
   updateTextareaValue(textarea, result.value);
   setSelection(textarea, result.selectionStart, result.selectionEnd);
 }
 
-function continueList(textarea: HTMLTextAreaElement): boolean {
-  const value = textarea.value;
-  const start = textarea.selectionStart;
-  if (start !== textarea.selectionEnd) return false;
-  const lineStart = value.lastIndexOf("\n", start - 1) + 1;
-  const line = value.slice(lineStart, start);
-  const match = line.match(/^(\s*)([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?/);
-  if (!match) return false;
+function insertSoftBreak(textarea: HTMLTextAreaElement) {
+  applyTextEdit(
+    textarea,
+    insertMarkdownSoftBreak({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
+}
 
-  if (line.trim() === match[0].trim()) {
-    const next = `${value.slice(0, lineStart)}${value.slice(start)}`;
-    updateTextareaValue(textarea, next);
-    setSelection(textarea, lineStart, lineStart);
-    return true;
+function navigateTableCell(textarea: HTMLTextAreaElement, direction: "next" | "previous"): boolean {
+  const result = navigateMarkdownTableCell({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  }, direction);
+  if (!result) return false;
+  applyTextEdit(textarea, result);
+  return true;
+}
+
+function selectLine() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  const result = selectCurrentLine({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  });
+  setSelection(textarea, result.selectionStart, result.selectionEnd);
+}
+
+function selectParagraph() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  const result = selectCurrentParagraph({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  });
+  setSelection(textarea, result.selectionStart, result.selectionEnd);
+}
+
+function selectWord() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  const result = selectCurrentWord({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  });
+  setSelection(textarea, result.selectionStart, result.selectionEnd);
+}
+
+function selectSentence() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  const result = selectCurrentSentence({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  });
+  setSelection(textarea, result.selectionStart, result.selectionEnd);
+}
+
+function selectStyleScope() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  const result = selectCurrentStyleScope({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  });
+  setSelection(textarea, result.selectionStart, result.selectionEnd);
+}
+
+function deleteWord() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    deleteCurrentWord({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
+}
+
+function deleteSentence() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    deleteCurrentSentence({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
+}
+
+function deleteParagraph() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    deleteCurrentParagraph({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
+}
+
+function deleteStyleScope() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    deleteCurrentStyleScope({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
+}
+
+function selectAllText() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  const target = getSelectAllTarget(props.settings.sourceMode, props.modelValue.length, textarea.value.length);
+  if (target.sourceModeRequired) {
+    emit("requestSourceSelection", target.selectionStart, target.selectionEnd);
+    return;
   }
 
-  let marker = match[2];
-  const number = marker.match(/^(\d+)([.)])$/);
-  if (number) {
-    marker = `${Number(number[1]) + 1}${number[2]}`;
+  setSelection(textarea, target.selectionStart, target.selectionEnd);
+}
+
+async function copyMarkdownSource() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  const markdownSource = getSelectedMarkdownSource(
+    props.settings.sourceMode,
+    props.modelValue,
+    textarea.value,
+    activeRange.value?.start ?? 0,
+    textarea.selectionStart,
+    textarea.selectionEnd,
+  );
+  if (!markdownSource) return;
+
+  try {
+    await navigator.clipboard.writeText(markdownSource);
+  } catch {
+    document.execCommand("copy");
   }
-  insertAtCursor(`\n${match[1]}${marker} ${match[3] ?? ""}`);
+}
+
+async function copyPlainTextSource() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  const markdownSource = getSelectedMarkdownSource(
+    props.settings.sourceMode,
+    props.modelValue,
+    textarea.value,
+    activeRange.value?.start ?? 0,
+    textarea.selectionStart,
+    textarea.selectionEnd,
+  );
+  if (!markdownSource) return;
+
+  try {
+    await navigator.clipboard.writeText(getPlainTextFromMarkdownSelection(markdownSource));
+  } catch {
+    document.execCommand("copy");
+  }
+}
+
+async function copyHtmlSource() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  const markdownSource = getSelectedMarkdownSource(
+    props.settings.sourceMode,
+    props.modelValue,
+    textarea.value,
+    activeRange.value?.start ?? 0,
+    textarea.selectionStart,
+    textarea.selectionEnd,
+  );
+  if (!markdownSource) return;
+
+  const html = getSelectedMarkdownHtml(
+    props.settings.sourceMode,
+    props.modelValue,
+    textarea.value,
+    activeRange.value?.start ?? 0,
+    textarea.selectionStart,
+    textarea.selectionEnd,
+    props.settings,
+    props.filePath,
+  );
+
+  try {
+    const ClipboardItemCtor = globalThis.ClipboardItem;
+    if (ClipboardItemCtor) {
+      await navigator.clipboard.write([
+        new ClipboardItemCtor({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([markdownSource], { type: "text/plain" }),
+        }),
+      ]);
+      return;
+    }
+    await navigator.clipboard.writeText(html);
+  } catch {
+    document.execCommand("copy");
+  }
+}
+
+async function pastePlainTextFromClipboard() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+
+  try {
+    const text = await navigator.clipboard.readText();
+    applyTextEdit(
+      textarea,
+      pastePlainMarkdownText({
+        value: textarea.value,
+        selectionStart: textarea.selectionStart,
+        selectionEnd: textarea.selectionEnd,
+      }, text),
+    );
+  } catch {
+    document.execCommand("paste");
+  }
+}
+
+function duplicateLines() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    duplicateMarkdownLines({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
+}
+
+function deleteLines() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    deleteMarkdownLines({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
+}
+
+function moveLines(direction: "up" | "down") {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    moveMarkdownLines({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }, direction),
+  );
+}
+
+function continueBlock(textarea: HTMLTextAreaElement): boolean {
+  const result = continueMarkdownBlock({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  });
+  if (!result) return false;
+  applyTextEdit(textarea, result);
+  return true;
+}
+
+function applySpaceShortcut(textarea: HTMLTextAreaElement): boolean {
+  const result = applyMarkdownSpaceShortcut({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  });
+  if (!result) return false;
+  applyTextEdit(textarea, result);
   return true;
 }
 
 function toggleCurrentTask() {
   const textarea = ensureTextarea();
   if (!textarea) return;
-  const { value, start, lineStart, normalizedEnd } = getLineRange(textarea);
-  const line = value.slice(lineStart, normalizedEnd);
-  const nextLine = line.replace(/(\[[ xX]\])/, (match) => (match.toLowerCase() === "[x]" ? "[ ]" : "[x]"));
-  if (nextLine === line) {
-    prefixLines("- [ ] ");
-    return;
-  }
-  updateTextareaValue(textarea, `${value.slice(0, lineStart)}${nextLine}${value.slice(normalizedEnd)}`);
-  setSelection(textarea, start, start);
+  applyTextEdit(
+    textarea,
+    toggleTaskAtSelection({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }),
+  );
 }
 
 function toggleTaskInBlock(blockIndex: number, order: number) {
   const block = blocks.value[blockIndex];
   if (!block) return;
-  let seen = -1;
-  const nextRaw = block.raw
-    .split("\n")
-    .map((line) => {
-      if (!/^(\s*[-*+]\s+)\[[ xX]\]/.test(line)) return line;
-      seen += 1;
-      if (seen !== order) return line;
-      return line.replace(/\[[ xX]\]/, (match) => (match.toLowerCase() === "[x]" ? "[ ]" : "[x]"));
-    })
-    .join("\n");
+  const nextRaw = toggleMarkdownTaskByOrder(block.raw, order);
   emit("update:modelValue", replaceBlock(props.modelValue, block, nextRaw));
 }
 
@@ -620,90 +1665,152 @@ function replaceBlockSource(blockIndex: number, nextRaw: string) {
 function editTable(kind: "row" | "column") {
   const textarea = ensureTextarea();
   if (!textarea) return;
-  const lines = textarea.value.split("\n");
-  const tableStart = lines.findIndex((line) => /^\|.*\|$/.test(line.trim()));
-  if (tableStart < 0 || tableStart + 1 >= lines.length) {
-    runCommand("table");
-    return;
-  }
+  applyTextEdit(
+    textarea,
+    editMarkdownTable({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }, kind),
+  );
+}
 
-  if (kind === "row") {
-    const columns = splitTableRow(lines[tableStart]).length;
-    lines.splice(tableStart + 2, 0, buildTableRow(Array.from({ length: columns }, () => "内容")));
-  } else {
-    for (let index = tableStart; index < lines.length && /^\|.*\|$/.test(lines[index].trim()); index += 1) {
-      const cells = splitTableRow(lines[index]);
-      cells.push(index === tableStart ? "新列" : index === tableStart + 1 ? "---" : "内容");
-      lines[index] = buildTableRow(cells);
-    }
-  }
+function insertTableRow(position: "above" | "below") {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    insertMarkdownTableRow({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }, position),
+  );
+}
 
-  updateTextareaValue(textarea, lines.join("\n"));
+function insertTableColumn(position: "left" | "right") {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  applyTextEdit(
+    textarea,
+    insertMarkdownTableColumn({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }, position),
+  );
+}
+
+function moveTableRow(direction: "up" | "down") {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  const result = moveMarkdownTableRow({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  }, direction);
+  if (result) {
+    applyTextEdit(textarea, result);
+  }
+}
+
+function moveTableColumn(direction: "left" | "right") {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  const result = moveMarkdownTableColumn({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  }, direction);
+  if (result) {
+    applyTextEdit(textarea, result);
+  }
+}
+
+function deleteTable(kind: "row" | "column") {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  const result = deleteMarkdownTablePart({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  }, kind);
+  if (result) {
+    applyTextEdit(textarea, result);
+  }
+}
+
+function selectTable(kind: "cell" | "row" | "column" | "table") {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  const result = selectMarkdownTablePart({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  }, kind);
+  if (result) {
+    setSelection(textarea, result.selectionStart, result.selectionEnd);
+  }
+}
+
+function deleteWholeTable() {
+  const textarea = ensureTextarea();
+  if (!textarea) return;
+  const result = deleteMarkdownTable({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  });
+  if (result) {
+    applyTextEdit(textarea, result);
+  }
 }
 
 function alignTable(align: "left" | "center" | "right") {
   const textarea = ensureTextarea();
   if (!textarea) return;
-  const lines = textarea.value.split("\n");
-  const separator = lines.findIndex((line) => /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line.trim()));
-  if (separator < 0) return;
-
-  const cells = splitTableRow(lines[separator]);
-  const marker = align === "left" ? ":---" : align === "right" ? "---:" : ":---:";
-  lines[separator] = buildTableRow(cells.map(() => marker));
-  updateTextareaValue(textarea, lines.join("\n"));
+  const result = alignMarkdownTable({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  }, align);
+  if (result) {
+    applyTextEdit(textarea, result);
+  }
 }
 
 function setImageWidth(widthPayload?: string) {
   const textarea = ensureTextarea();
   if (!textarea) return;
-  const width = widthPayload || window.prompt("图片宽度，例如 480 或 60%", "480");
+  const width = widthPayload;
   if (!width) return;
 
-  const { value, lineStart, normalizedEnd } = getLineRange(textarea);
-  const line = value.slice(lineStart, normalizedEnd);
-  const match = line.match(/!\[([^\]]*)]\(([^)]+)\)/);
-  if (!match) return;
-
-  const size = /^\d+$/.test(width) ? `${width}px` : width;
-  const nextLine = `<img src="${match[2]}" alt="${match[1]}" width="${size}">`;
-  updateTextareaValue(textarea, `${value.slice(0, lineStart)}${nextLine}${value.slice(normalizedEnd)}`);
-}
-
-function splitTableRow(row: string): string[] {
-  return row
-    .trim()
-    .replace(/^\|/, "")
-    .replace(/\|$/, "")
-    .split("|")
-    .map((cell) => cell.trim());
-}
-
-function buildTableRow(cells: string[]): string {
-  return `| ${cells.join(" | ")} |`;
-}
-
-function getLineRange(textarea: HTMLTextAreaElement) {
-  const value = textarea.value;
-  let start = textarea.selectionStart;
-  let end = textarea.selectionEnd;
-  if (start === end && start > 0 && start === value.length && value.endsWith("\n")) {
-    start -= 1;
-    end -= 1;
+  const result = setImageWidthInLine({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  }, width);
+  if (result) {
+    applyTextEdit(textarea, result);
   }
-  const lineStart = value.lastIndexOf("\n", start - 1) + 1;
-  const lineEnd = value.indexOf("\n", end);
-  const normalizedEnd = lineEnd === -1 ? value.length : lineEnd;
-  return { value, start, end, lineStart, normalizedEnd };
 }
 
-function updateEmojiState(textarea: HTMLTextAreaElement) {
+function updateEmojiState(textarea: HTMLTextAreaElement, force = false): boolean {
+  if (
+    props.settings.emojiAutocomplete === "off"
+    || (props.settings.emojiAutocomplete === "escape" && !force)
+  ) {
+    emojiQuery.value = "";
+    emojiRange.value = null;
+    return false;
+  }
+
   const before = textarea.value.slice(0, textarea.selectionStart);
   const match = before.match(/:([a-z0-9_+-]{1,20})$/i);
   if (!match) {
     emojiQuery.value = "";
     emojiRange.value = null;
-    return;
+    return false;
   }
 
   emojiQuery.value = match[1];
@@ -711,6 +1818,7 @@ function updateEmojiState(textarea: HTMLTextAreaElement) {
     start: textarea.selectionStart - match[0].length,
     end: textarea.selectionStart,
   };
+  return true;
 }
 
 function applyEmoji(value: string) {
@@ -727,12 +1835,29 @@ function applyEmoji(value: string) {
 
 async function handlePaste(event: ClipboardEvent) {
   const file = Array.from(event.clipboardData?.files ?? []).find((item) => item.type.startsWith("image/"));
-  if (!file) return;
+  if (file) {
+    event.preventDefault();
+    emit("imageData", {
+      name: file.name || `paste-${Date.now()}.png`,
+      dataUrl: await fileToDataUrl(file),
+    });
+    return;
+  }
+
+  const textarea = getCurrentTextarea();
+  const text = event.clipboardData?.getData("text/plain") ?? "";
+  const html = event.clipboardData?.getData("text/html") ?? "";
+  if (!textarea || (!text && !html)) return;
+
+  const result = pasteMarkdownContent({
+    value: textarea.value,
+    selectionStart: textarea.selectionStart,
+    selectionEnd: textarea.selectionEnd,
+  }, { text, html });
+  if (!result) return;
+
   event.preventDefault();
-  emit("imageData", {
-    name: file.name || `paste-${Date.now()}.png`,
-    dataUrl: await fileToDataUrl(file),
-  });
+  applyTextEdit(textarea, result);
 }
 
 async function handleDrop(event: DragEvent) {
@@ -753,8 +1878,14 @@ function activateDroppedBlock(event: DragEvent) {
   const target = event.target instanceof Element ? event.target : null;
   const block = target?.closest<HTMLElement>(".editor-block");
   const index = Number(block?.dataset.blockIndex);
-  if (Number.isInteger(index) && blocks.value[index]) {
-    activeIndex.value = index;
+  const markdownBlock = blocks.value[index];
+  if (!Number.isInteger(index) || !markdownBlock) return;
+  if (markdownBlock.type === "table") {
+    activateTableBlock(index);
+  } else if (isRichEditableBlock(markdownBlock)) {
+    activateRichBlock(index);
+  } else {
+    activateBlock(index);
   }
 }
 
@@ -771,14 +1902,19 @@ function emitSelectionFromActive() {
   const textarea = activeTextareaRef.value;
   if (!textarea) return;
   const selected = textarea.value.slice(textarea.selectionStart, textarea.selectionEnd);
-  emit("selection", calculateSelectionStats(selected));
+  const base = activeRange.value?.start ?? 0;
+  emitSelectionFromText(selected, base + textarea.selectionStart, base + textarea.selectionEnd);
 }
 
 function emitSelectionFromSource() {
   const textarea = sourceTextareaRef.value;
   if (!textarea) return;
   const selected = textarea.value.slice(textarea.selectionStart, textarea.selectionEnd);
-  emit("selection", calculateSelectionStats(selected));
+  emitSelectionFromText(selected, textarea.selectionStart, textarea.selectionEnd);
+}
+
+function emitSelectionFromText(selected: string, selectionStart: number, selectionEnd: number) {
+  emit("selection", calculateSelectionStats(selected, props.modelValue, selectionEnd, selectionStart, selectionEnd));
 }
 
 function setSelection(textarea: HTMLTextAreaElement, start: number, end: number) {
@@ -792,7 +1928,7 @@ function setSelection(textarea: HTMLTextAreaElement, start: number, end: number)
 function resizeTextarea(textarea: HTMLTextAreaElement | null) {
   if (!textarea) return;
   textarea.style.height = "auto";
-  textarea.style.height = `${Math.max(96, textarea.scrollHeight + 2)}px`;
+  textarea.style.height = `${Math.max(28, textarea.scrollHeight + 2)}px`;
 }
 
 function centerActiveBlock() {
@@ -818,29 +1954,26 @@ function escapeBrackets(value: string): string {
   max-width: var(--reading-max-width);
   min-height: 1.4rem;
   margin: 0 auto;
-  border-radius: 8px;
-  transition:
-    background-color 0.16s ease,
-    box-shadow 0.16s ease;
+  border-radius: 4px;
+  transition: background-color 0.14s ease;
 }
 
 .editor-block:hover:not(.active) {
-  background: rgba(59, 130, 246, 0.035);
+  background: rgba(59, 130, 246, 0.025);
 }
 
 .editor-block.active {
-  background: rgba(59, 130, 246, 0.055);
-  box-shadow: inset 3px 0 0 rgba(59, 130, 246, 0.38);
+  background: rgba(59, 130, 246, 0.035);
 }
 
 .block-source,
 .source-editor {
   display: block;
   width: 100%;
-  border: 1px solid #c9d5e7;
-  border-radius: 8px;
-  background: #fcfdff;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65);
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
   color: var(--text-main);
   font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", Menlo,
     monospace;
@@ -848,26 +1981,24 @@ function escapeBrackets(value: string): string {
   line-height: 1.7;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 0.85rem 1rem;
+  padding: 0.2rem 0.5rem;
   resize: none;
-  tab-size: 2;
+  tab-size: var(--editor-tab-size, 2);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 :global(:root[data-theme="dark"]) .block-source,
 :global(:root[data-theme="dark"]) .source-editor {
-  border-color: var(--border-strong);
-  background: #111820;
   color: var(--text-main);
 }
 
 .block-source {
-  min-height: 96px;
+  min-height: 1.7em;
 }
 
 .source-editor {
-  min-height: calc(100vh - 190px);
+  min-height: calc(100vh - 140px);
   max-width: var(--reading-max-width);
   margin: 0 auto;
 }
@@ -907,6 +2038,67 @@ function escapeBrackets(value: string): string {
   color: var(--muted);
   font-family: "JetBrains Mono", Consolas, monospace;
   font-size: 0.78rem;
+}
+
+.editor-context-menu {
+  position: fixed;
+  z-index: 85;
+  display: grid;
+  width: 236px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 0.28rem;
+}
+
+.context-menu-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.46rem;
+  min-height: 30px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-main);
+  cursor: pointer;
+  font-size: 0.78rem;
+  padding: 0.3rem 0.46rem;
+  text-align: left;
+}
+
+.context-menu-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.context-menu-item svg {
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+}
+
+.context-menu-item:hover svg {
+  color: var(--text);
+}
+
+.context-menu-item span {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-menu-item small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.context-menu-separator {
+  height: 1px;
+  background: var(--border);
+  margin: 0.24rem 0.32rem;
 }
 
 @media print {

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Marko logo">
+  <defs>
+    <linearGradient id="bg" x1="96" y1="96" x2="928" y2="928" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#12313b"/>
+      <stop offset="1" stop-color="#149785"/>
+    </linearGradient>
+  </defs>
+  <rect x="56" y="56" width="912" height="912" rx="218" fill="url(#bg)"/>
+  <path d="M148 884 852 180 976 356 356 976Z" fill="#ffffff" opacity="0.12"/>
+  <path d="M282 724V342l230 236 230-236v382" fill="none" stroke="#fffaf2" stroke-width="128" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M842 500v230" fill="none" stroke="#ffb84d" stroke-width="72" stroke-linecap="round"/>
+  <rect x="56" y="56" width="912" height="912" rx="218" fill="none" stroke="#ffffff" stroke-width="16" opacity="0.28"/>
+</svg>

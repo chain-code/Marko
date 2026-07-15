@@ -2,12 +2,26 @@
   <article
     ref="rootRef"
     class="markdown markdown-inner"
+    :class="{ 'wrap-code-blocks': settings.codeWrap }"
     :style="previewStyle"
     v-html="html"
-    @click="handleClick"
+    @click.stop="handleClick"
     @dblclick="handleDoubleClick"
     @keydown.capture="handleSourceEditorKeydown"
     @blur.capture="handleSourceEditorBlur"
+  />
+
+  <textarea
+    v-if="sourceVisible"
+    ref="sourceEditorRef"
+    class="preview-source-editor"
+    :value="source"
+    :spellcheck="settings.spellcheck"
+    aria-label="Markdown 源码"
+    @click.stop
+    @input="handleBlockSourceInput"
+    @keydown="handleBlockSourceKeydown"
+    @blur="hideSourceEditor"
   />
 
   <Teleport to="body">
@@ -16,7 +30,7 @@
       class="diagram-viewer-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="流程图大图"
+      aria-label="大图查看"
       @click.self="closeDiagramViewer"
     >
       <div class="diagram-viewer-toolbar">
@@ -24,7 +38,7 @@
           <button
             type="button"
             class="diagram-viewer-tool"
-            aria-label="缩小流程图"
+            aria-label="缩小大图"
             :disabled="diagramViewerScale <= diagramViewerMinScale"
             @click="zoomDiagramViewer(-0.2)"
           >
@@ -36,7 +50,7 @@
           <button
             type="button"
             class="diagram-viewer-tool"
-            aria-label="重置流程图大小"
+            aria-label="重置大图大小"
             @click="resetDiagramViewerZoom"
           >
             <RotateCcw />
@@ -47,7 +61,7 @@
           <button
             type="button"
             class="diagram-viewer-tool"
-            aria-label="放大流程图"
+            aria-label="放大大图"
             :disabled="diagramViewerScale >= diagramViewerMaxScale"
             @click="zoomDiagramViewer(0.2)"
           >
@@ -59,7 +73,7 @@
           <button
             type="button"
             class="diagram-viewer-tool"
-            aria-label="关闭流程图大图"
+            aria-label="关闭大图"
             @click="closeDiagramViewer"
           >
             <X />
@@ -84,6 +98,14 @@ import type { MermaidConfig } from "mermaid";
 import { Minus, Plus, RotateCcw, X } from "lucide-vue-next";
 import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from "vue";
 import { renderMarkdown } from "@/utils/markdown";
+import {
+  acquireViewerBodyLock,
+  clampViewerScale,
+  getViewerContentSize,
+  getViewerContentStyle,
+  releaseViewerBodyLock,
+} from "@/utils/mediaViewer";
+import { getPreviewLinkAction, resolveLocalMarkdownHref, shouldOpenPreviewLink } from "@/utils/previewLinks";
 import { resolveLocalAsset } from "@/services/desktop";
 import type { EditorSettings, OutlineItem } from "@/types";
 
@@ -98,9 +120,13 @@ const props = defineProps<{
 const emit = defineEmits<{
   toggleTask: [order: number];
   replaceSource: [value: string];
+  openLink: [path: string];
+  openAnchor: [href: string];
 }>();
 
 const rootRef = ref<HTMLElement | null>(null);
+const sourceEditorRef = ref<HTMLTextAreaElement | null>(null);
+const sourceVisible = ref(false);
 const diagramViewerVisible = ref(false);
 const diagramViewerHtml = ref("");
 const diagramViewerScale = ref(1);
@@ -109,6 +135,7 @@ const diagramViewerBaseHeight = ref(0);
 const diagramViewerContentRef = ref<HTMLElement | null>(null);
 const diagramViewerMinScale = 0.4;
 const diagramViewerMaxScale = 3;
+const viewerLockOwner = Symbol("markdown-preview-viewer");
 
 const html = computed(() =>
   renderMarkdown(props.source, {
@@ -129,10 +156,10 @@ const diagramViewerContentStyle = computed(() => {
     return {};
   }
 
-  return {
-    width: `${Math.round(diagramViewerBaseWidth.value * diagramViewerScale.value)}px`,
-    height: `${Math.round(diagramViewerBaseHeight.value * diagramViewerScale.value)}px`,
-  };
+  return getViewerContentStyle({
+    width: diagramViewerBaseWidth.value,
+    height: diagramViewerBaseHeight.value,
+  }, diagramViewerScale.value, diagramViewerMinScale, diagramViewerMaxScale);
 });
 
 onMounted(renderDiagrams);
@@ -140,18 +167,18 @@ onUpdated(renderDiagrams);
 onBeforeUnmount(() => {
   window.clearTimeout(diagramClickTimer);
   window.removeEventListener("keydown", handleWindowKeydown);
-  document.body.classList.remove("diagram-viewer-open");
+  releaseViewerBodyLock(viewerLockOwner);
 });
 
 watch(diagramViewerVisible, (visible) => {
   if (visible) {
     window.addEventListener("keydown", handleWindowKeydown);
-    document.body.classList.add("diagram-viewer-open");
+    acquireViewerBodyLock(viewerLockOwner);
     return;
   }
 
   window.removeEventListener("keydown", handleWindowKeydown);
-  document.body.classList.remove("diagram-viewer-open");
+  releaseViewerBodyLock(viewerLockOwner);
 });
 
 function handleClick(event: MouseEvent) {
@@ -173,6 +200,56 @@ function handleClick(event: MouseEvent) {
     return;
   }
 
+  const imageElement = target?.closest<HTMLImageElement>("img");
+  if (imageElement && rootRef.value?.contains(imageElement)) {
+    event.preventDefault();
+    event.stopPropagation();
+    showSourceEditor();
+    return;
+  }
+
+  const anchorElement = target?.closest<HTMLAnchorElement>("a[href]");
+  if (anchorElement && rootRef.value?.contains(anchorElement)) {
+    const href = anchorElement.getAttribute("href");
+    const action = getPreviewLinkAction(href);
+    if (action === "blocked") {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (!shouldOpenPreviewLink(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      showSourceEditor();
+      return;
+    }
+    if (action === "anchor" && href) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!openLocalPreviewAnchor(href)) emit("openAnchor", href);
+      return;
+    }
+    if (action === "external") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (href) emit("openAnchor", href);
+      return;
+    }
+    const markdownPath = resolveLocalMarkdownHref(href, props.basePath);
+    if (markdownPath) {
+      event.preventDefault();
+      event.stopPropagation();
+      emit("openLink", markdownPath);
+      return;
+    }
+    if ((action === "relative" || action === "local") && href) {
+      event.preventDefault();
+      event.stopPropagation();
+      emit("openAnchor", href);
+      return;
+    }
+  }
+
   const diagramElement = target?.closest<HTMLElement>(".diagram-box");
   if (diagramElement && rootRef.value?.contains(diagramElement)) {
     event.preventDefault();
@@ -181,13 +258,22 @@ function handleClick(event: MouseEvent) {
     diagramClickTimer = window.setTimeout(() => {
       toggleDiagramSource(diagramElement);
     }, 180);
+    return;
   }
+
+  showSourceEditor();
 }
 
 function handleDoubleClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null;
   if (target?.closest(".diagram-source-panel")) {
     event.stopPropagation();
+    return;
+  }
+
+  const imageElement = target?.closest<HTMLImageElement>("img");
+  if (imageElement && rootRef.value?.contains(imageElement)) {
+    openImageViewer(imageElement);
     return;
   }
 
@@ -198,6 +284,37 @@ function handleDoubleClick(event: MouseEvent) {
 
   window.clearTimeout(diagramClickTimer);
   openDiagramViewer(event, diagramElement);
+}
+
+function showSourceEditor() {
+  sourceVisible.value = true;
+  void nextTick(() => {
+    const editor = sourceEditorRef.value;
+    if (!editor) return;
+    editor.style.height = "auto";
+    editor.style.height = `${Math.max(32, editor.scrollHeight + 2)}px`;
+    editor.focus();
+  });
+}
+
+function hideSourceEditor() {
+  window.setTimeout(() => {
+    if (document.activeElement !== sourceEditorRef.value) sourceVisible.value = false;
+  }, 80);
+}
+
+function handleBlockSourceInput(event: Event) {
+  const editor = event.target as HTMLTextAreaElement;
+  emit("replaceSource", editor.value);
+  editor.style.height = "auto";
+  editor.style.height = `${Math.max(32, editor.scrollHeight + 2)}px`;
+}
+
+function handleBlockSourceKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape" || ((event.ctrlKey || event.metaKey) && event.key === "Enter")) {
+    event.preventDefault();
+    sourceVisible.value = false;
+  }
 }
 
 function toggleDiagramSource(diagramElement: HTMLElement) {
@@ -277,6 +394,43 @@ function openDiagramViewer(event: MouseEvent, diagramElement: HTMLElement) {
   void nextTick(updateDiagramViewerBaseSize);
 }
 
+function openImageViewer(imageElement: HTMLImageElement) {
+  const source = imageElement.currentSrc || imageElement.src;
+  if (!source) return;
+
+  resetDiagramViewerZoom();
+  diagramViewerHtml.value = `<img src="${escapeAttribute(source)}" alt="${escapeAttribute(imageElement.alt || "")}">`;
+  diagramViewerVisible.value = true;
+  void nextTick(updateDiagramViewerBaseSize);
+}
+
+function escapeAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function openLocalPreviewAnchor(href: string) {
+  const id = decodePreviewAnchor(href);
+  if (!id) return false;
+  const editor = rootRef.value?.closest(".block-editor");
+  const target = Array.from(editor?.querySelectorAll<HTMLElement>("[id]") ?? [])
+    .find((element) => element.id === id);
+  if (!target) return false;
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  return true;
+}
+
+function decodePreviewAnchor(href: string) {
+  try {
+    return decodeURIComponent(href.slice(1));
+  } catch {
+    return href.slice(1);
+  }
+}
+
 function closeDiagramViewer() {
   diagramViewerVisible.value = false;
   diagramViewerHtml.value = "";
@@ -328,37 +482,31 @@ function handleWindowKeydown(event: KeyboardEvent) {
 
 function updateDiagramViewerBaseSize() {
   const svg = diagramViewerContentRef.value?.querySelector<SVGSVGElement>("svg");
-  if (!svg) {
+  const image = diagramViewerContentRef.value?.querySelector<HTMLImageElement>("img");
+  if (!svg && !image) {
     diagramViewerBaseWidth.value = 0;
     diagramViewerBaseHeight.value = 0;
     return;
   }
 
-  const viewBox = svg.viewBox.baseVal;
-  const renderedRect = svg.getBoundingClientRect();
-  const width = viewBox.width || parseSvgLength(svg.getAttribute("width")) || renderedRect.width;
-  const height = viewBox.height || parseSvgLength(svg.getAttribute("height")) || renderedRect.height;
-  diagramViewerBaseWidth.value = Math.max(1, width);
-  diagramViewerBaseHeight.value = Math.max(1, height);
-}
-
-function parseSvgLength(value: string | null) {
-  if (!value) {
-    return 0;
-  }
-
-  const match = value.match(/^\d+(?:\.\d+)?/);
-  if (!match) {
-    return 0;
-  }
-
-  const numericValue = Number(match[0]);
-  return Number.isFinite(numericValue) ? numericValue : 0;
+  const renderedRect = (svg ?? image)?.getBoundingClientRect();
+  const viewBox = svg?.viewBox.baseVal;
+  const size = getViewerContentSize({
+    viewBoxWidth: viewBox?.width,
+    viewBoxHeight: viewBox?.height,
+    svgWidth: svg?.getAttribute("width"),
+    svgHeight: svg?.getAttribute("height"),
+    naturalWidth: image?.naturalWidth,
+    naturalHeight: image?.naturalHeight,
+    renderedWidth: renderedRect?.width,
+    renderedHeight: renderedRect?.height,
+  });
+  diagramViewerBaseWidth.value = size.width;
+  diagramViewerBaseHeight.value = size.height;
 }
 
 function clampDiagramViewerScale(value: number) {
-  const clamped = Math.min(diagramViewerMaxScale, Math.max(diagramViewerMinScale, value));
-  return Math.round(clamped * 100) / 100;
+  return clampViewerScale(value, diagramViewerMinScale, diagramViewerMaxScale);
 }
 
 async function renderDiagrams() {
@@ -428,10 +576,34 @@ async function renderFlowchartBlocks(root: HTMLElement) {
   const nodes = Array.from(root.querySelectorAll<HTMLElement>(".flowchart-render:not([data-rendered='true'])"));
   if (nodes.length === 0) return;
 
+  const mermaidNodes = nodes.filter((node) => isMermaidFlowchartSource(node.dataset.diagramSource || ""));
+  const flowchartNodes = nodes.filter((node) => !mermaidNodes.includes(node));
+
+  if (mermaidNodes.length > 0) {
+    const mermaid = await loadMermaid();
+    for (const node of mermaidNodes) {
+      const source = node.dataset.diagramSource || "";
+      node.dataset.rendered = "true";
+      node.classList.add("diagram-loading");
+      try {
+        const id = `marko-mermaid-${Date.now()}-${++diagramSequence}`;
+        const { svg, bindFunctions } = await mermaid.render(id, source);
+        node.innerHTML = svg;
+        bindFunctions?.(node);
+        node.classList.remove("diagram-loading");
+      } catch (error) {
+        node.classList.remove("diagram-loading");
+        node.classList.add("diagram-error");
+        node.innerHTML = `<p>流程图渲染失败，请检查 Mermaid 语法。</p><pre>${escapeHtml(String(error))}</pre>`;
+      }
+    }
+  }
+
+  if (flowchartNodes.length === 0) return;
   const module = await import("flowchart.js");
   const flowchart = module.default ?? module;
 
-  for (const node of nodes) {
+  for (const node of flowchartNodes) {
     const source = node.dataset.diagramSource || "";
     node.dataset.rendered = "true";
     try {
@@ -456,6 +628,11 @@ async function renderFlowchartBlocks(root: HTMLElement) {
   }
 }
 
+function isMermaidFlowchartSource(source: string): boolean {
+  return /^\s*(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR)\b/im.test(source)
+    || /^\s*subgraph(?:\s+|$)/im.test(source);
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -478,6 +655,28 @@ function escapeHtml(value: string): string {
   padding: 0.2rem 0.5rem 0.35rem;
 }
 
+.preview-source-editor {
+  display: block;
+  width: 100%;
+  max-width: var(--reading-max-width);
+  min-height: 2rem;
+  margin: 0.25rem auto 0.45rem;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  outline: none;
+  overflow: hidden;
+  padding: 0.2rem 0.5rem;
+  resize: none;
+}
+
+.preview-source-editor:focus {
+  color: var(--text-main);
+}
+
 .markdown-inner :deep(> :first-child) {
   margin-top: 0;
 }
@@ -498,18 +697,17 @@ function escapeHtml(value: string): string {
 }
 
 .markdown-inner :deep(h1) {
-  border-bottom: 1px solid #e7edf6;
+  border-bottom: 1px solid var(--heading-rule);
   font-size: 2.05rem;
   margin: 0 0 1.15rem;
   padding-bottom: 0.55rem;
 }
 
 .markdown-inner :deep(h2) {
-  border-left: 3px solid #d8e5ff;
+  border-bottom: 1px solid var(--heading-rule);
   font-size: 1.35rem;
   margin-top: 2.05rem;
   margin-bottom: 0.86rem;
-  padding-left: 0.55rem;
 }
 
 .markdown-inner :deep(h3) {
@@ -541,7 +739,7 @@ function escapeHtml(value: string): string {
 }
 
 .markdown-inner :deep(p) {
-  margin: 0.88rem 0;
+  margin: 0.8em 0;
   padding-inline-start: 0.48rem;
   word-break: break-word;
 }
@@ -556,13 +754,24 @@ function escapeHtml(value: string): string {
 .markdown-inner :deep(ul),
 .markdown-inner :deep(ol) {
   color: var(--text-main);
-  margin: 0.88rem 0;
-  padding-inline-start: 2rem;
+  margin: 0.8em 0;
+  padding-inline-start: 1.875rem;
 }
 
 .markdown-inner :deep(li) {
-  margin: 0.35rem 0;
+  margin: 0;
   padding-inline-start: 0.1rem;
+}
+
+.markdown-inner :deep(ul > li)::marker {
+  color: var(--text-main);
+  font-size: 1.2em;
+  font-weight: 650;
+}
+
+.markdown-inner :deep(li > ul),
+.markdown-inner :deep(li > ol) {
+  margin: 0;
 }
 
 .markdown-inner :deep(li > p),
@@ -570,6 +779,24 @@ function escapeHtml(value: string): string {
 .markdown-inner :deep(td p) {
   margin: 0.45rem 0;
   padding-inline-start: 0;
+}
+
+.markdown-inner :deep(dl) {
+  margin: 1rem 0;
+  padding-inline-start: 0.5rem;
+}
+
+.markdown-inner :deep(dt) {
+  color: var(--text);
+  font-weight: 650;
+  margin-top: 0.8rem;
+}
+
+.markdown-inner :deep(dd) {
+  border-left: 2px solid #d8e5ff;
+  color: var(--text-main);
+  margin: 0.28rem 0 0.56rem 0.85rem;
+  padding-left: 0.75rem;
 }
 
 .markdown-inner :deep(a) {
@@ -581,6 +808,12 @@ function escapeHtml(value: string): string {
 
 .markdown-inner :deep(a:hover) {
   text-decoration-color: rgba(37, 99, 235, 0.6);
+}
+
+.markdown-inner :deep(abbr[title]) {
+  cursor: help;
+  text-decoration: underline dotted rgba(37, 99, 235, 0.55);
+  text-underline-offset: 0.16rem;
 }
 
 .markdown-inner :deep(code) {
@@ -619,16 +852,39 @@ function escapeHtml(value: string): string {
   padding: 0;
 }
 
+.markdown-inner :deep(pre.code-with-line-numbers) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0.85rem;
+}
+
+.markdown-inner :deep(pre.code-with-line-numbers::before) {
+  content: attr(data-line-numbers);
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  font-family: "JetBrains Mono", Consolas, monospace;
+  line-height: 1.5;
+  padding-right: 0.72rem;
+  text-align: right;
+  white-space: pre;
+  user-select: none;
+}
+
+.markdown-inner.wrap-code-blocks :deep(pre code) {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .markdown-inner :deep(blockquote) {
-  border-left: 3px solid #d8e5ff;
+  border-left: 3px solid var(--border);
   border-radius: 0 8px 8px 0;
-  background: #f8fbff;
+  background: color-mix(in srgb, var(--panel-subtle) 40%, var(--panel));
   margin: 1.05rem 0;
   padding: 0.75rem 1rem;
 }
 
 :root[data-theme="dark"] .markdown-inner :deep(blockquote) {
-  background: #17202b;
+  background: color-mix(in srgb, var(--panel-subtle) 40%, var(--panel));
 }
 
 .markdown-inner :deep(table) {
@@ -636,7 +892,7 @@ function escapeHtml(value: string): string {
   overflow-x: auto;
   width: 100%;
   border-collapse: collapse;
-  margin: 1.05rem 0;
+  margin: 0.8em 0;
 }
 
 .markdown-inner :deep(th) {
@@ -834,6 +1090,21 @@ function escapeHtml(value: string): string {
   padding-top: 1rem;
 }
 
+.markdown-inner :deep(.math-inline) {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: -0.08em;
+}
+
+.markdown-inner :deep(.math-block) {
+  overflow-x: auto;
+  margin: 1.05rem 0;
+  padding: 0.35rem 0;
+  text-align: center;
+}
+
 .markdown-inner :deep(.footnote-definition-block) {
   border: 1px dashed var(--border-strong);
   border-radius: 8px;
@@ -960,5 +1231,13 @@ function escapeHtml(value: string): string {
   max-width: none !important;
   height: 100%;
   margin: 0 auto;
+}
+
+.diagram-viewer-content :deep(img) {
+  display: block;
+  width: 100%;
+  max-width: none !important;
+  height: 100%;
+  object-fit: contain;
 }
 </style>
