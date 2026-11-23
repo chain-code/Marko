@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  getPreviewHrefAnchor,
   getPreviewLinkAction,
   isExternalPreviewHref,
   resolveLocalMarkdownHref,
@@ -88,4 +89,12 @@ test("resolveLocalMarkdownHref opens absolute local markdown links like Typora",
   );
   assert.equal(resolveLocalMarkdownHref("file:///C:/docs/image.png"), null);
   assert.equal(resolveLocalMarkdownHref("obsidian://open?vault=docs"), null);
+});
+
+test("getPreviewHrefAnchor preserves cross-document heading fragments", () => {
+  assert.equal(getPreviewHrefAnchor("../guide/intro.md#install"), "#install");
+  assert.equal(getPreviewHrefAnchor("file:///C:/docs/intro.md#API%2Dv2"), "#API%2Dv2");
+  assert.equal(getPreviewHrefAnchor("chapter.md?from=toc#details"), "#details");
+  assert.equal(getPreviewHrefAnchor("chapter.md#"), "");
+  assert.equal(getPreviewHrefAnchor("chapter.md"), "");
 });

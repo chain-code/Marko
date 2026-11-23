@@ -60,12 +60,19 @@ test("desktop service exposes creating a folder in a workspace folder", () => {
   assert.match(tauriSource, /create_folder,/);
 });
 
-test("desktop service exposes picking a local image file", () => {
-  assert.match(desktopSource, /export async function pickImageFile\(\): Promise<string \| null>/);
-  assert.match(desktopSource, /invoke<string \| null>\("pick_image_file"\)/);
-  assert.match(desktopSource, /export function openBrowserImageFile\(\): Promise<File \| null>/);
-  assert.match(tauriSource, /fn pick_image_file\(\) -> Result<Option<String>, String>/);
+test("desktop service exposes picking multiple local image files", () => {
+  assert.match(desktopSource, /export async function pickImageFile\(\): Promise<string\[\]>/);
+  assert.match(desktopSource, /if \(!isTauriRuntime\(\)\) return \[\];/);
+  assert.match(desktopSource, /invoke<string\[\]>\("pick_image_file"\)/);
+  assert.match(desktopSource, /export function openBrowserImageFile\(\): Promise<File\[\]>/);
+  assert.match(desktopSource, /input\.multiple = true/);
+  assert.match(desktopSource, /resolve\(Array\.from\(input\.files \?\? \[\]\)\)/);
+  assert.match(desktopSource, /input\.addEventListener\("cancel", \(\) => resolve\(\[\]\)\)/);
+  assert.match(tauriSource, /fn pick_image_file\(\) -> Result<Vec<String>, String>/);
+  assert.match(tauriSource, /\.pick_files\(\)[\s\S]*?\.unwrap_or_default\(\)/);
   assert.match(tauriSource, /pick_image_file,/);
+  assert.match(tauriSource, /"jfif"/);
+  assert.match(tauriSource, /"tiff"/);
 });
 
 test("desktop service exposes checking whether a path is a directory", () => {
@@ -86,14 +93,25 @@ test("desktop service exposes the developer tools command", () => {
   assert.match(tauriConfigSource, /"devtools": true/);
 });
 
-test("desktop image commands support Typora-style target folders", () => {
+test("desktop media commands support Typora-style target folders", () => {
   assert.match(desktopSource, /action: ImageInsertAction = "assets"/);
   assert.match(desktopSource, /invoke<string>\("save_data_url_asset", \{[\s\S]*?action,/);
   assert.match(desktopSource, /invoke<string>\("copy_image_file_asset", \{[\s\S]*?action,/);
+  assert.match(desktopSource, /invoke<string>\("copy_media_file_asset", \{[\s\S]*?action,/);
+  assert.match(tauriSource, /fn copy_media_file_asset\(/);
+  assert.match(tauriSource, /copy_media_file_asset,/);
   assert.match(tauriSource, /fn resolve_image_asset_dir\(current_path: Option<&Path>, action: &str\)/);
   assert.match(tauriSource, /"current" => parent\.to_path_buf\(\)/);
   assert.match(tauriSource, /"documentAssets" =>/);
   assert.match(tauriSource, /parent\.join\("assets"\)/);
+  assert.doesNotMatch(tauriSource, /fn default_asset_dir\(/);
+});
+
+test("native file drops keep their logical insertion coordinates", () => {
+  assert.match(desktopSource, /export interface NativeFileDrop/);
+  assert.match(desktopSource, /position: \{ x: number; y: number \}/);
+  assert.match(desktopSource, /event\.payload\.position\.x \/ scaleFactor/);
+  assert.match(desktopSource, /event\.payload\.position\.y \/ scaleFactor/);
 });
 
 test("desktop service opens Markdown files passed by the operating system", () => {

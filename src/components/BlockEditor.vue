@@ -34,7 +34,11 @@
         class="editor-block"
         :class="[
           'block-' + block.type,
-          { active: block.index === activeIndex || block.index === activeRichIndex || block.index === activeTableIndex },
+          {
+            active: block.index === activeIndex || block.index === activeRichIndex || block.index === activeTableIndex,
+            'is-document-first': block.index === 0,
+            'is-document-last': block.index === blocks.length - 1,
+          },
         ]"
         :data-block-index="block.index"
         @click="activateSourceBlock(block)"
@@ -45,6 +49,7 @@
           :source="block.raw"
           :document-source="modelValue"
           :file-path="filePath"
+          :source-offset="block.start"
           :outline="outline"
           :settings="settings"
           @update="replaceBlockSource(block.index, $event)"
@@ -58,10 +63,12 @@
           :ref="(editor) => setRichEditorRef(block.index, editor)"
           :source="block.raw"
           :document-source="modelValue"
+          :source-offset="block.start"
           :file-path="filePath"
           :outline="outline"
           :settings="settings"
           @update="replaceBlockSource(block.index, $event)"
+          embedded-block
           @focus="activateRichBlock(block.index)"
           @selection="emitVisualSelection(block, $event)"
           @open-link="emit('openLinkHref', $event)"
@@ -85,10 +92,12 @@
           v-else
           :source="block.raw"
           :document-source="modelValue"
+          :source-offset="block.start"
           :base-path="filePath"
           :outline="outline"
           :settings="settings"
           @toggle-task="toggleTaskInBlock(block.index, $event)"
+          embedded-block
           @replace-source="replaceBlockSource(block.index, $event)"
           @open-link="emit('openLink', $event)"
           @open-anchor="emit('openLinkHref', $event)"
@@ -153,6 +162,7 @@ import {
 import MarkdownPreview from "@/components/MarkdownPreview.vue";
 import RichMarkdownBlock from "@/components/RichMarkdownBlock.vue";
 import VisualTableEditor from "@/components/VisualTableEditor.vue";
+import { getEmojiCompletionRange } from "@/utils/continuousEditor";
 import { getEmojiSuggestions } from "@/utils/markdown";
 import {
   clampEditorContextMenuPosition,
@@ -163,9 +173,11 @@ import { insertFrontMatterSnippet } from "@/utils/snippets";
 import { indentSelection, replaceBlock, splitMarkdownBlocks, type MarkdownBlock } from "@/utils/editorBlocks";
 import { getKeyboardShortcutPlatform, resolveEditorShortcut } from "@/utils/keyboardShortcuts";
 import { getDocumentBoundaryOffset } from "@/utils/textPosition";
+import { isMarkdownTocLine } from "@/utils/tocSyntax";
 import {
   alignMarkdownTable,
   adjustHeadingLevel,
+  applyDefaultCodeLanguageOnFenceKey,
   applyMarkdownSpaceShortcut,
   applyAutoPair,
   clearMarkdownFormatting,
@@ -222,6 +234,11 @@ import {
   wrapMarkdownSelection,
   type TextEditResult,
 } from "@/utils/editorCommands";
+import { getCodeFenceInfoString } from "@/utils/codeFenceLanguage";
+import {
+  resolveDefaultCodeLanguage,
+  type DefaultCodeLanguageChannel,
+} from "@/utils/codeLanguagePreference";
 import { findMarkdownLinkAtCursor } from "@/utils/markdownLinks";
 import { calculateSelectionStats } from "@/utils/stats";
 import type { EditorCommand, EditorSettings, ImagePayload, OutlineItem, SelectionStats } from "@/types";
@@ -261,6 +278,7 @@ const pendingInsert = ref("");
 const emojiQuery = ref("");
 const emojiRange = ref<{ start: number; end: number } | null>(null);
 const contextMenu = ref<{ items: EditorContextMenuItem[]; x: number; y: number } | null>(null);
+const lastCodeLanguage = ref("");
 
 const contextActionIcons: Partial<Record<EditorCommand, unknown>> = {
   undo: Undo2,
@@ -299,6 +317,9 @@ watch(activeIndex, async (index) => {
 
   const block = blocks.value[index];
   if (!block) return;
+  if (block.type === "code") {
+    lastCodeLanguage.value = getCodeFenceInfoString(block.raw)?.value ?? "";
+  }
   activeDraft.value = block.raw;
   activeRange.value = { start: block.start, end: block.end };
   await nextTick();
@@ -370,7 +391,7 @@ function setTableEditorRef(index: number, editor: unknown) {
 
 function isRichEditableBlock(block: MarkdownBlock) {
   if (!["paragraph", "heading", "list", "task", "quote", "definition"].includes(block.type)) return false;
-  return !/(^|\n)\s*\[TOC\]\s*(?:\n|$)/i.test(block.raw)
+  return !block.raw.split(/\r?\n/).some(isMarkdownTocLine)
     && !/(^|\n)\s*>\s*\[![A-Z]+\]/.test(block.raw)
     && !/\[\^[^\]]+\]/.test(block.raw)
     && !/(^|[^\\])\$[^\n$]+\$/.test(block.raw)
@@ -527,6 +548,28 @@ function handleKeydown(event: KeyboardEvent) {
     return;
   }
 
+  if (
+    !props.settings.sourceMode
+    && !event.ctrlKey
+    && !event.metaKey
+    && !event.altKey
+    && !event.shiftKey
+    && (event.key === "`" || event.key === "~")
+  ) {
+    const language = getDefaultCodeLanguage("markdown");
+    const result = applyDefaultCodeLanguageOnFenceKey({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }, event.key, language);
+    if (result) {
+      event.preventDefault();
+      lastCodeLanguage.value = language;
+      applyTextEdit(textarea, result);
+      return;
+    }
+  }
+
   if (event.key === "Tab") {
     event.preventDefault();
     if (navigateTableCell(textarea, event.shiftKey ? "previous" : "next")) {
@@ -557,7 +600,7 @@ function handleKeydown(event: KeyboardEvent) {
       value: textarea.value,
       selectionStart: textarea.selectionStart,
       selectionEnd: textarea.selectionEnd,
-    });
+    }, props.settings.indentSize);
     if (result) {
       event.preventDefault();
       applyTextEdit(textarea, result);
@@ -883,13 +926,16 @@ function runCommand(command: EditorCommand, payload?: string) {
       insertFrontMatter();
       break;
     case "callout":
-      insertCalloutTemplate();
+      insertCalloutTemplate(payload);
       break;
     case "mermaid":
       insertDiagramTemplate("mermaid");
       break;
     case "flowchart":
       insertDiagramTemplate("flowchart");
+      break;
+    case "sequence":
+      insertDiagramTemplate("sequence");
       break;
     case "setImageWidth":
       setImageWidth(payload);
@@ -1141,7 +1187,7 @@ function insertTableTemplate() {
   );
 }
 
-function insertCalloutTemplate() {
+function insertCalloutTemplate(kind?: string) {
   const textarea = ensureTextarea();
   if (!textarea) return;
   applyTextEdit(
@@ -1150,7 +1196,7 @@ function insertCalloutTemplate() {
       value: textarea.value,
       selectionStart: textarea.selectionStart,
       selectionEnd: textarea.selectionEnd,
-    }),
+    }, kind),
   );
 }
 
@@ -1198,7 +1244,7 @@ function insertFootnoteTemplate() {
   }, 100);
 }
 
-function insertDiagramTemplate(language: "mermaid" | "flowchart") {
+function insertDiagramTemplate(language: "mermaid" | "flowchart" | "sequence") {
   const textarea = ensureTextarea();
   if (!textarea) return;
   applyTextEdit(
@@ -1303,7 +1349,16 @@ function setCodeBlock() {
       value: textarea.value,
       selectionStart: textarea.selectionStart,
       selectionEnd: textarea.selectionEnd,
-    }, props.settings.defaultCodeLanguage),
+    }, getDefaultCodeLanguage("menu")),
+  );
+}
+
+function getDefaultCodeLanguage(channel: DefaultCodeLanguageChannel): string {
+  return resolveDefaultCodeLanguage(
+    props.settings.defaultCodeLanguage,
+    props.settings.defaultCodeLanguageApplyTo,
+    channel,
+    lastCodeLanguage.value,
   );
 }
 
@@ -1619,7 +1674,7 @@ function continueBlock(textarea: HTMLTextAreaElement): boolean {
     value: textarea.value,
     selectionStart: textarea.selectionStart,
     selectionEnd: textarea.selectionEnd,
-  });
+  }, props.settings.indentSize);
   if (!result) return false;
   applyTextEdit(textarea, result);
   return true;
@@ -1630,7 +1685,7 @@ function applySpaceShortcut(textarea: HTMLTextAreaElement): boolean {
     value: textarea.value,
     selectionStart: textarea.selectionStart,
     selectionEnd: textarea.selectionEnd,
-  });
+  }, props.settings.indentSize);
   if (!result) return false;
   applyTextEdit(textarea, result);
   return true;
@@ -1805,18 +1860,17 @@ function updateEmojiState(textarea: HTMLTextAreaElement, force = false): boolean
     return false;
   }
 
-  const before = textarea.value.slice(0, textarea.selectionStart);
-  const match = before.match(/:([a-z0-9_+-]{1,20})$/i);
-  if (!match) {
+  const completion = getEmojiCompletionRange(textarea.value, textarea.selectionStart);
+  if (!completion) {
     emojiQuery.value = "";
     emojiRange.value = null;
     return false;
   }
 
-  emojiQuery.value = match[1];
+  emojiQuery.value = completion.query;
   emojiRange.value = {
-    start: textarea.selectionStart - match[0].length,
-    end: textarea.selectionStart,
+    start: completion.from,
+    end: completion.to,
   };
   return true;
 }
@@ -1950,12 +2004,48 @@ function escapeBrackets(value: string): string {
 }
 
 .editor-block {
+  --editor-block-margin: 0.8em;
   width: 100%;
   max-width: var(--reading-max-width);
   min-height: 1.4rem;
-  margin: 0 auto;
+  margin: var(--editor-block-margin) auto;
   border-radius: 4px;
   transition: background-color 0.14s ease;
+}
+
+.editor-block.block-heading {
+  --editor-block-margin: 1rem;
+}
+
+.editor-block.block-code {
+  --editor-block-margin: 15px;
+}
+
+.editor-block.block-math,
+.editor-block.block-rule {
+  --editor-block-margin: 16px;
+}
+
+.editor-block.block-footnote {
+  --editor-block-margin: 1em;
+}
+
+.editor-block.block-frontmatter,
+.editor-block.block-reference,
+.editor-block.block-abbreviation {
+  --editor-block-margin: 0px;
+}
+
+.editor-block.is-document-first {
+  margin-top: 0;
+}
+
+.editor-block.is-document-last {
+  margin-bottom: 0;
+}
+
+.editor-block.block-table :deep(.visual-table-editor) {
+  padding-block: 0;
 }
 
 .editor-block:hover:not(.active) {
@@ -1995,6 +2085,7 @@ function escapeBrackets(value: string): string {
 
 .block-source {
   min-height: 1.7em;
+  padding-block: 0;
 }
 
 .source-editor {

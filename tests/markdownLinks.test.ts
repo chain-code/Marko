@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { findMarkdownLinkAtCursor } from "../src/utils/markdownLinks";
+import {
+  findMarkdownLinkAtCursor,
+  parseMarkdownLinkDestination,
+} from "../src/utils/markdownLinks";
 
 test("findMarkdownLinkAtCursor reads inline links under the cursor", () => {
   const source = "read [docs](https://example.com/a(b) \"Docs\") now";
@@ -30,6 +33,74 @@ test("findMarkdownLinkAtCursor reads angle-wrapped image links", () => {
       image: true,
     },
   );
+});
+
+test("findMarkdownLinkAtCursor decodes Markdown escapes and entities in inline destinations", () => {
+  const escaped = String.raw`read [docs](docs/a\(b\).md)`;
+  const entity = "read [query](foo&amp;bar.md)";
+
+  assert.equal(
+    findMarkdownLinkAtCursor(escaped, escaped.indexOf("docs"), escaped.indexOf("docs"))?.href,
+    "docs/a(b).md",
+  );
+  assert.equal(
+    findMarkdownLinkAtCursor(entity, entity.indexOf("query"), entity.indexOf("query"))?.href,
+    "foo&bar.md",
+  );
+});
+
+test("findMarkdownLinkAtCursor reads Typora destinations with unwrapped spaces", () => {
+  const source = [
+    'read [docs](foo bar "Docs title")',
+    "and",
+    "![logo](assets/my image.png 'Image title')",
+  ].join(" ");
+  const linkStart = source.indexOf("[docs]");
+  const imageStart = source.indexOf("![logo]");
+
+  assert.deepEqual(
+    findMarkdownLinkAtCursor(source, source.indexOf("docs"), source.indexOf("docs")),
+    {
+      start: linkStart,
+      end: source.indexOf(" and"),
+      href: "foo bar",
+      label: "docs",
+      image: false,
+    },
+  );
+  assert.deepEqual(
+    findMarkdownLinkAtCursor(source, source.indexOf("logo"), source.indexOf("logo")),
+    {
+      start: imageStart,
+      end: source.length,
+      href: "assets/my image.png",
+      label: "logo",
+      image: true,
+    },
+  );
+});
+
+test("parseMarkdownLinkDestination separates only a complete trailing title", () => {
+  assert.deepEqual(parseMarkdownLinkDestination("foo bar baz"), {
+    href: "foo bar baz",
+    title: null,
+    angleWrapped: false,
+  });
+  assert.deepEqual(parseMarkdownLinkDestination('foo bar "Double title"'), {
+    href: "foo bar",
+    title: "Double title",
+    angleWrapped: false,
+  });
+  assert.deepEqual(parseMarkdownLinkDestination("foo bar 'Single title'"), {
+    href: "foo bar",
+    title: "Single title",
+    angleWrapped: false,
+  });
+  assert.deepEqual(parseMarkdownLinkDestination("folder/my file.md (说明)"), {
+    href: "folder/my file.md",
+    title: "说明",
+    angleWrapped: false,
+  });
 });
 
 test("findMarkdownLinkAtCursor resolves reference and shortcut links", () => {
@@ -71,6 +142,18 @@ test("findMarkdownLinkAtCursor opens bare external urls", () => {
     label: "https://example.com/docs?a=1#top",
     image: false,
   });
+});
+
+test("findMarkdownLinkAtCursor can disable bare links without disabling Markdown links", () => {
+  const source = "[Docs](https://example.com) https://example.com";
+  assert.equal(
+    findMarkdownLinkAtCursor(source, source.indexOf("Docs"), source.indexOf("Docs"), false)?.href,
+    "https://example.com",
+  );
+  assert.equal(
+    findMarkdownLinkAtCursor(source, source.lastIndexOf("example"), source.lastIndexOf("example"), false),
+    null,
+  );
 });
 
 test("findMarkdownLinkAtCursor opens bare local markdown paths", () => {
@@ -131,4 +214,121 @@ test("findMarkdownLinkAtCursor ignores unsupported bare text", () => {
   assert.equal(findMarkdownLinkAtCursor(source, source.indexOf("note"), source.indexOf("note")), null);
   assert.equal(findMarkdownLinkAtCursor(source, source.indexOf("alert"), source.indexOf("alert")), null);
   assert.equal(findMarkdownLinkAtCursor(source, source.indexOf("heading"), source.indexOf("heading")), null);
+});
+
+test("findMarkdownLinkAtCursor resolves quoted and listed reference definitions", () => {
+  const quoted = "read [Quote][id]\n\n> [id]: /quoted.md";
+  assert.equal(
+    findMarkdownLinkAtCursor(quoted, quoted.indexOf("Quote"), quoted.indexOf("Quote"))?.href,
+    "/quoted.md",
+  );
+
+  const listed = "read [List][id]\n\n- [id]: /listed.md";
+  assert.equal(
+    findMarkdownLinkAtCursor(listed, listed.indexOf("List"), listed.indexOf("List"))?.href,
+    "/listed.md",
+  );
+});
+
+test("findMarkdownLinkAtCursor ignores reference definitions inside raw blocks", () => {
+  const fenced = "read [Bad][id]\n\n```md\n[id]: /bad.md\n```";
+  assert.equal(
+    findMarkdownLinkAtCursor(fenced, fenced.indexOf("Bad"), fenced.indexOf("Bad")),
+    null,
+  );
+
+  const html = "read [Bad][id]\n\n<pre>\n[id]: /bad.md\n</pre>";
+  assert.equal(
+    findMarkdownLinkAtCursor(html, html.indexOf("Bad"), html.indexOf("Bad")),
+    null,
+  );
+});
+
+test("findMarkdownLinkAtCursor accepts only parsed Markdown links and images", () => {
+  const codeSpan = "`[x](/code.md)`";
+  assert.equal(findMarkdownLinkAtCursor(codeSpan, codeSpan.indexOf("x"), codeSpan.indexOf("x")), null);
+
+  const fence = "```md\n[x](/fence.md)\n```";
+  assert.equal(findMarkdownLinkAtCursor(fence, fence.indexOf("x"), fence.indexOf("x")), null);
+
+  const htmlAttribute = '<span title="[x](/attribute.md)">body</span>';
+  assert.equal(
+    findMarkdownLinkAtCursor(htmlAttribute, htmlAttribute.indexOf("x"), htmlAttribute.indexOf("x")),
+    null,
+  );
+
+  for (const literal of [
+    "`[x](foo bar)`",
+    "```md\n[x](foo bar)\n```",
+    '<span title="[x](foo bar)">body</span>',
+  ]) {
+    const cursor = literal.indexOf("x");
+    assert.equal(findMarkdownLinkAtCursor(literal, cursor, cursor), null, literal);
+  }
+
+  const escapedImageMarker = "\\![x](/link.md)";
+  assert.deepEqual(
+    findMarkdownLinkAtCursor(
+      escapedImageMarker,
+      escapedImageMarker.indexOf("x"),
+      escapedImageMarker.indexOf("x"),
+    ),
+    {
+      start: escapedImageMarker.indexOf("["),
+      end: escapedImageMarker.length,
+      href: "/link.md",
+      label: "x",
+      image: false,
+    },
+  );
+
+  const escapedOpenBracket = "!\\[x](/missing.md)";
+  assert.equal(
+    findMarkdownLinkAtCursor(
+      escapedOpenBracket,
+      escapedOpenBracket.indexOf("x"),
+      escapedOpenBracket.indexOf("x"),
+    ),
+    null,
+  );
+});
+
+test("findMarkdownLinkAtCursor rejects dangerous inline Markdown destinations", () => {
+  for (const href of ["javascript:alert(1)", "vbscript:msgbox(1)", "data:text/html,hello"]) {
+    const source = `[unsafe](${href})`;
+    assert.equal(
+      findMarkdownLinkAtCursor(source, source.indexOf("unsafe"), source.indexOf("unsafe")),
+      null,
+      href,
+    );
+  }
+
+  for (const href of ["https://example.com", "file:///C:/docs/guide.md", "../guide.md"]) {
+    const source = `[safe](${href})`;
+    assert.equal(
+      findMarkdownLinkAtCursor(source, source.indexOf("safe"), source.indexOf("safe"))?.href,
+      href,
+    );
+  }
+});
+
+test("findMarkdownLinkAtCursor ignores bare URLs inside literal Markdown regions", () => {
+  const cases = [
+    "`https://example.com/code`",
+    "```text\nhttps://example.com/fence\n```",
+    '<span title="https://example.com/attribute">body</span>',
+    "<div>\nhttps://example.com/html-block\n</div>",
+    "---\nurl: https://example.com/frontmatter\n---\nBody",
+    "$$\nhttps://example.com/math\n$$",
+    "\\[\nhttps://example.com/bracket-math\n\\]",
+  ];
+
+  for (const source of cases) {
+    const cursor = source.indexOf("example.com");
+    assert.equal(findMarkdownLinkAtCursor(source, cursor, cursor), null, source);
+  }
+
+  const inlineBody = "<span>https://example.com/body</span>";
+  const cursor = inlineBody.indexOf("example.com");
+  assert.equal(findMarkdownLinkAtCursor(inlineBody, cursor, cursor)?.href, "https://example.com/body");
 });

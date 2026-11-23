@@ -23,9 +23,9 @@ export async function pickFolder(): Promise<string | null> {
   return invoke<string | null>("pick_folder");
 }
 
-export async function pickImageFile(): Promise<string | null> {
-  if (!isTauriRuntime()) return null;
-  return invoke<string | null>("pick_image_file");
+export async function pickImageFile(): Promise<string[]> {
+  if (!isTauriRuntime()) return [];
+  return invoke<string[]>("pick_image_file");
 }
 
 export async function readTextFile(path: string): Promise<string> {
@@ -111,6 +111,22 @@ export async function copyImageFileAsset(
   });
 }
 
+export async function copyMediaFileAsset(
+  currentPath: string | null,
+  path: string,
+  action: ImageInsertAction = "assets",
+): Promise<string> {
+  if (!isTauriRuntime()) {
+    return path;
+  }
+
+  return invoke<string>("copy_media_file_asset", {
+    currentPath,
+    path,
+    action,
+  });
+}
+
 export async function revealFileInFolder(path: string): Promise<void> {
   if (!isTauriRuntime()) {
     return;
@@ -183,8 +199,13 @@ export async function toggleNativeFullscreen(): Promise<boolean> {
   return next;
 }
 
+export interface NativeFileDrop {
+  paths: string[];
+  position: { x: number; y: number };
+}
+
 export async function listenNativeFileDrops(
-  handler: (paths: string[]) => void | Promise<void>,
+  handler: (drop: NativeFileDrop) => void | Promise<void>,
 ): Promise<() => void> {
   if (!isTauriRuntime()) {
     return () => {};
@@ -193,7 +214,14 @@ export async function listenNativeFileDrops(
   const { getCurrentWebview } = await import("@tauri-apps/api/webview");
   return getCurrentWebview().onDragDropEvent((event) => {
     if (event.payload.type === "drop" && event.payload.paths.length > 0) {
-      void handler(event.payload.paths);
+      const scaleFactor = window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
+      void handler({
+        paths: event.payload.paths,
+        position: {
+          x: event.payload.position.x / scaleFactor,
+          y: event.payload.position.y / scaleFactor,
+        },
+      });
     }
   });
 }
@@ -242,14 +270,16 @@ export function openBrowserMarkdownFile(): Promise<{ name: string; content: stri
   });
 }
 
-export function openBrowserImageFile(): Promise<File | null> {
+export function openBrowserImageFile(): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "image/*";
+    input.multiple = true;
     input.addEventListener("change", () => {
-      resolve(input.files?.[0] ?? null);
+      resolve(Array.from(input.files ?? []));
     });
+    input.addEventListener("cancel", () => resolve([]));
     input.click();
   });
 }

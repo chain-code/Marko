@@ -648,8 +648,8 @@ defineExpose({ scrollCurrentFileIntoView, showFiles, showOutline, showSearch, fo
 .app-sidebar {
   display: grid;
   grid-template-rows: 38px minmax(0, 1fr);
-  width: var(--sidebar-width, 260px);
-  min-width: var(--sidebar-width, 260px);
+  width: var(--sidebar-layout-width, var(--sidebar-width, 260px));
+  min-width: var(--sidebar-layout-width, var(--sidebar-width, 260px));
   height: 100%;
   background: var(--sidebar-bg);
   color: var(--text);
@@ -1178,11 +1178,6 @@ defineExpose({ scrollCurrentFileIntoView, showFiles, showOutline, showSearch, fo
 }
 
 @media (max-width: 900px) {
-  .app-sidebar {
-    width: min(var(--sidebar-width, 260px), 72vw);
-    min-width: min(var(--sidebar-width, 260px), 72vw);
-  }
-
   .sidebar-tab {
     gap: 0.2rem;
   }

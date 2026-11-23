@@ -7,6 +7,7 @@ const appSource = readFileSync(resolve("src/App.vue"), "utf8");
 const toolbarSource = readFileSync(resolve("src/components/AppToolbar.vue"), "utf8");
 const continuousEditorSource = readFileSync(resolve("src/components/ContinuousMarkdownEditor.vue"), "utf8");
 const sidebarSource = readFileSync(resolve("src/components/AppSidebar.vue"), "utf8");
+const globalStyleSource = readFileSync(resolve("src/assets/styles/global.css"), "utf8");
 
 test("AppToolbar keeps a Typora-style menu-only top bar", () => {
   assert.match(toolbarSource, /<header[^>]*class="app-toolbar"[\s\S]*<nav class="menu-bar"/);
@@ -32,8 +33,9 @@ test("Status bar exposes Typora-style word count entry points", () => {
 });
 
 test("source mode temporarily hides the sidebar and restores the stored sidebar preference", () => {
-  assert.match(appSource, /:class="\{ 'no-sidebar': !sidebarVisible \|\| effectiveSettings\.focusMode \|\| effectiveSettings\.sourceMode \}"/);
-  assert.match(appSource, /v-if="sidebarVisible && !effectiveSettings\.focusMode && !effectiveSettings\.sourceMode"/);
+  assert.match(appSource, /const sidebarLayoutVisible = computed\(\(\) => \([\s\S]*sidebarVisible\.value && !settings\.value\.focusMode && !settings\.value\.sourceMode/);
+  assert.match(appSource, /:class="\{ 'no-sidebar': !sidebarLayoutVisible \}"/);
+  assert.match(appSource, /v-if="sidebarLayoutVisible"/);
   assert.doesNotMatch(appSource, /watch\([^)]*sourceMode[\s\S]*sidebarVisible\.value = false/);
 });
 
@@ -49,4 +51,28 @@ test("AppSidebar keeps the Typora-style three-mode left rail", () => {
   assert.match(sidebarSource, /\{ key: "outline", label: "大纲"/);
   assert.match(sidebarSource, /\{ key: "search", label: "搜索"/);
   assert.match(sidebarSource, /\.file-panel \{\s*grid-template-rows: minmax\(0, 1fr\) 30px;/);
+});
+
+test("sidebar and editor share one responsive width and one dedicated divider", () => {
+  assert.match(globalStyleSource, /--sidebar-divider:\s*#e8e8e8;/);
+  assert.match(
+    globalStyleSource,
+    /:root\[data-theme="dark"\][\s\S]*--sidebar-divider:\s*#242930;/,
+  );
+  assert.match(globalStyleSource, /--border:\s*#d9dde3;/);
+  assert.match(
+    appSource,
+    /\.workspace \{\s*--sidebar-layout-width: var\(--sidebar-width, 260px\);[\s\S]*grid-template-columns: var\(--sidebar-layout-width\) 1px minmax\(0, 1fr\);/,
+  );
+  assert.match(
+    appSource,
+    /@media \(max-width: 900px\) \{\s*\.workspace \{\s*--sidebar-layout-width: min\(var\(--sidebar-width, 260px\), 72vw\);/,
+  );
+  assert.match(
+    sidebarSource,
+    /width: var\(--sidebar-layout-width, var\(--sidebar-width, 260px\)\);\s*min-width: var\(--sidebar-layout-width, var\(--sidebar-width, 260px\)\);/,
+  );
+  assert.match(appSource, /\.sidebar-resizer \{[\s\S]*background: var\(--sidebar-divider\);/);
+  assert.doesNotMatch(sidebarSource, /\.app-sidebar \{[^}]*border-right:/);
+  assert.doesNotMatch(appSource, /\.editor-pane \{[^}]*border-left:/);
 });

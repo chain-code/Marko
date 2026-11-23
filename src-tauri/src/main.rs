@@ -15,7 +15,22 @@ use walkdir::WalkDir;
 const MARKDOWN_EXTENSIONS: &[&str] = &[
     "md", "markdown", "mdown", "mkd", "mkdn", "mdwn", "mdtxt", "mdtext", "rmd",
 ];
-const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
+const IMAGE_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "jfif", "gif", "webp", "svg", "bmp", "tif", "tiff", "avif",
+];
+const VIDEO_EXTENSIONS: &[&str] = &[
+    "mp4", "webm", "mkv", "flv", "avi", "mov", "wmv", "rm", "rmvb", "mpg", "mpeg", "mpv",
+];
+const AUDIO_EXTENSIONS: &[&str] = &[
+    "mp3", "vox", "wav", "wma", "m4a", "m4p", "ogg", "wave", "flac", "aac",
+];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LocalMediaKind {
+    Image,
+    Video,
+    Audio,
+}
 
 #[derive(Serialize)]
 struct FileEntry {
@@ -47,11 +62,14 @@ fn pick_folder() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn pick_image_file() -> Result<Option<String>, String> {
+fn pick_image_file() -> Result<Vec<String>, String> {
     Ok(rfd::FileDialog::new()
         .add_filter("Image", IMAGE_EXTENSIONS)
-        .pick_file()
-        .map(path_to_string))
+        .pick_files()
+        .unwrap_or_default()
+        .into_iter()
+        .map(path_to_string)
+        .collect())
 }
 
 #[tauri::command]
@@ -392,14 +410,13 @@ fn save_data_url_asset(
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from);
     let action = action.as_deref().unwrap_or("assets");
-    let asset_dir = resolve_image_asset_dir(current.as_deref(), action);
+    let asset_dir = resolve_image_asset_dir(current.as_deref(), action)?;
 
     fs::create_dir_all(&asset_dir).map_err(format_io_error)?;
 
     let extension = infer_extension(&name, meta);
-    let stem = sanitize_file_stem(&name);
-    let file_name = format!("{}-{}.{}", stem, timestamp_millis(), extension);
-    let output_path = asset_dir.join(file_name);
+    let file_name = sanitize_asset_file_name(&name, "image", &extension);
+    let output_path = unique_asset_path(&asset_dir, Path::new(&file_name));
     fs::write(&output_path, bytes).map_err(format_io_error)?;
 
     if let Some(current_path) = current.as_deref() {
@@ -415,12 +432,33 @@ fn copy_image_file_asset(
     path: String,
     action: Option<String>,
 ) -> Result<String, String> {
+    copy_local_media_asset(current_path, path, action, true)
+}
+
+#[tauri::command]
+fn copy_media_file_asset(
+    current_path: Option<String>,
+    path: String,
+    action: Option<String>,
+) -> Result<String, String> {
+    copy_local_media_asset(current_path, path, action, false)
+}
+
+fn copy_local_media_asset(
+    current_path: Option<String>,
+    path: String,
+    action: Option<String>,
+    image_only: bool,
+) -> Result<String, String> {
     let input_path = PathBuf::from(path);
     if !input_path.is_file() {
-        return Err("请选择有效的图片文件。".to_string());
+        return Err("请选择有效的本地媒体文件。".to_string());
     }
-    if !is_image_file(&input_path) {
-        return Err("仅支持拖入图片文件。".to_string());
+    if image_only && !is_image_file(&input_path) {
+        return Err("仅支持插入图片文件。".to_string());
+    }
+    if !image_only && !is_media_file(&input_path) {
+        return Err("仅支持插入图片、视频或音频文件。".to_string());
     }
 
     let current = current_path
@@ -428,30 +466,25 @@ fn copy_image_file_asset(
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from);
     let action = action.as_deref().unwrap_or("assets");
-    let asset_dir = resolve_image_asset_dir(current.as_deref(), action);
-
+    let asset_dir = resolve_image_asset_dir(current.as_deref(), action)?;
     fs::create_dir_all(&asset_dir).map_err(format_io_error)?;
 
-    let extension = input_path
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_lowercase())
-        .unwrap_or_else(|| "png".to_string());
-    let stem = sanitize_file_stem(
-        input_path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("image"),
-    );
-    let file_name = format!("{}-{}.{}", stem, timestamp_millis(), extension);
-    let output_path = asset_dir.join(file_name);
-    fs::copy(&input_path, &output_path).map_err(format_io_error)?;
+    let file_name = input_path
+        .file_name()
+        .ok_or_else(|| "无法读取媒体文件名。".to_string())?;
+    let direct_output_path = asset_dir.join(file_name);
+    let output_path = if paths_refer_to_same_file(&input_path, &direct_output_path) {
+        direct_output_path
+    } else {
+        let output_path = unique_asset_path(&asset_dir, Path::new(file_name));
+        fs::copy(&input_path, &output_path).map_err(format_io_error)?;
+        output_path
+    };
 
-    if let Some(current_path) = current.as_deref() {
-        return Ok(relative_image_asset_path(current_path, &output_path));
-    }
-
-    Ok(path_to_string(output_path))
+    let current_path = current
+        .as_deref()
+        .ok_or_else(|| "请先保存 Markdown 文档。".to_string())?;
+    Ok(relative_image_asset_path(current_path, &output_path))
 }
 
 #[tauri::command]
@@ -590,6 +623,7 @@ fn main() {
             search_markdown_files,
             save_data_url_asset,
             copy_image_file_asset,
+            copy_media_file_asset,
             reveal_file_in_folder,
             open_containing_folder,
             open_folder_path,
@@ -654,13 +688,28 @@ fn is_markdown_file(path: &Path) -> bool {
 }
 
 fn is_image_file(path: &Path) -> bool {
-    path.extension()
+    matches!(get_local_media_kind(path), Some(LocalMediaKind::Image))
+}
+
+fn get_local_media_kind(path: &Path) -> Option<LocalMediaKind> {
+    let extension = path
+        .extension()
         .and_then(|value| value.to_str())
-        .map(|value| {
-            let extension = value.to_lowercase();
-            IMAGE_EXTENSIONS.contains(&extension.as_str())
-        })
-        .unwrap_or(false)
+        .map(str::to_lowercase)?;
+    if IMAGE_EXTENSIONS.contains(&extension.as_str()) {
+        return Some(LocalMediaKind::Image);
+    }
+    if VIDEO_EXTENSIONS.contains(&extension.as_str()) {
+        return Some(LocalMediaKind::Video);
+    }
+    if AUDIO_EXTENSIONS.contains(&extension.as_str()) {
+        return Some(LocalMediaKind::Audio);
+    }
+    None
+}
+
+fn is_media_file(path: &Path) -> bool {
+    get_local_media_kind(path).is_some()
 }
 
 fn file_name(path: &Path) -> String {
@@ -682,22 +731,17 @@ fn trim_snippet(line: &str) -> String {
     snippet.chars().take(157).collect::<String>() + "..."
 }
 
-fn default_asset_dir() -> PathBuf {
-    dirs::document_dir()
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
-        .join("Marko")
-        .join("assets")
-}
+fn resolve_image_asset_dir(current_path: Option<&Path>, action: &str) -> Result<PathBuf, String> {
+    if action == "none" {
+        return Err("当前设置不需要复制本地媒体。".to_string());
+    }
+    let current_path = current_path
+        .ok_or_else(|| "请先保存 Markdown 文档，再复制本地媒体到相对资源目录。".to_string())?;
+    let parent = current_path
+        .parent()
+        .ok_or_else(|| "无法确定 Markdown 文档所在目录。".to_string())?;
 
-fn resolve_image_asset_dir(current_path: Option<&Path>, action: &str) -> PathBuf {
-    let Some(current_path) = current_path else {
-        return default_asset_dir();
-    };
-    let Some(parent) = current_path.parent() else {
-        return default_asset_dir();
-    };
-
-    match action {
+    Ok(match action {
         "current" => parent.to_path_buf(),
         "documentAssets" => {
             let stem = current_path
@@ -707,7 +751,46 @@ fn resolve_image_asset_dir(current_path: Option<&Path>, action: &str) -> PathBuf
             parent.join(format!("{stem}.assets"))
         }
         _ => parent.join("assets"),
+    })
+}
+
+fn paths_refer_to_same_file(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
     }
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn unique_asset_path(asset_dir: &Path, file_name: &Path) -> PathBuf {
+    let file_name = file_name
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("media"));
+    let candidate = asset_dir.join(file_name);
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    let source = Path::new(file_name);
+    let stem = source
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("media");
+    let extension = source.extension().and_then(|value| value.to_str());
+    for index in 1_u32.. {
+        let candidate_name = match extension {
+            Some(extension) if !extension.is_empty() => format!("{stem}-{index}.{extension}"),
+            _ => format!("{stem}-{index}"),
+        };
+        let candidate = asset_dir.join(candidate_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!()
 }
 
 fn relative_image_asset_path(current_path: &Path, output_path: &Path) -> String {
@@ -931,27 +1014,27 @@ fn infer_extension(name: &str, meta: &str) -> String {
     }
 }
 
-fn sanitize_file_stem(name: &str) -> String {
-    let stem = Path::new(name)
-        .file_stem()
+fn sanitize_asset_file_name(name: &str, fallback_stem: &str, extension: &str) -> String {
+    let file_name = Path::new(name)
+        .file_name()
         .and_then(|value| value.to_str())
-        .unwrap_or("image");
-    let sanitized: String = stem
+        .unwrap_or("");
+    let sanitized: String = file_name
         .chars()
         .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                ch
-            } else {
+            if ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+            {
                 '-'
+            } else {
+                ch
             }
         })
         .collect();
-    let trimmed = sanitized.trim_matches('-').trim();
-    if trimmed.is_empty() {
-        "image".to_string()
-    } else {
-        trimmed.to_string()
+    let trimmed = sanitized.trim_end_matches(|ch| ch == ' ' || ch == '.');
+    if !trimmed.is_empty() && trimmed != "." && trimmed != ".." {
+        return trimmed.to_string();
     }
+    format!("{fallback_stem}.{extension}")
 }
 
 fn timestamp_millis() -> u128 {
@@ -1053,10 +1136,8 @@ mod tests {
 
     #[test]
     fn write_text_file_atomically_overwrites_an_existing_file_without_a_baseline() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "marko-save-overwrite-test-{}",
-            timestamp_millis()
-        ));
+        let temp_dir =
+            std::env::temp_dir().join(format!("marko-save-overwrite-test-{}", timestamp_millis()));
         fs::create_dir_all(&temp_dir).unwrap();
         let file_path = temp_dir.join("existing.md");
         fs::write(&file_path, "old content").unwrap();
@@ -1389,5 +1470,144 @@ mod tests {
             normalize_export_file_name(None, "epub"),
             "marko-export.epub"
         );
+    }
+
+    #[test]
+    fn media_asset_directory_requires_a_saved_document_and_supports_all_locations() {
+        assert!(resolve_image_asset_dir(None, "assets").is_err());
+
+        let document = Path::new("C:/notes/chapter.md");
+        assert_eq!(
+            resolve_image_asset_dir(Some(document), "assets").unwrap(),
+            PathBuf::from("C:/notes/assets")
+        );
+        assert_eq!(
+            resolve_image_asset_dir(Some(document), "current").unwrap(),
+            PathBuf::from("C:/notes")
+        );
+        assert_eq!(
+            resolve_image_asset_dir(Some(document), "documentAssets").unwrap(),
+            PathBuf::from("C:/notes/chapter.assets")
+        );
+        assert!(resolve_image_asset_dir(Some(document), "none").is_err());
+    }
+
+    #[test]
+    fn media_copy_preserves_names_and_adds_a_suffix_only_for_collisions() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("marko-media-copy-test-{}", timestamp_millis()));
+        let source_dir = temp_dir.join("source");
+        let document_dir = temp_dir.join("notes");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::create_dir_all(&document_dir).unwrap();
+        let document = document_dir.join("chapter.md");
+        fs::write(&document, "# chapter").unwrap();
+        let image = source_dir.join("流程 图.tiff");
+        fs::write(&image, b"image").unwrap();
+
+        let first = copy_image_file_asset(
+            Some(path_to_string(&document)),
+            path_to_string(&image),
+            Some("assets".to_string()),
+        )
+        .unwrap();
+        let second = copy_image_file_asset(
+            Some(path_to_string(&document)),
+            path_to_string(&image),
+            Some("assets".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(first, "assets/流程 图.tiff");
+        assert_eq!(second, "assets/流程 图-1.tiff");
+        assert_eq!(fs::read(document_dir.join(&first)).unwrap(), b"image");
+        assert_eq!(fs::read(document_dir.join(&second)).unwrap(), b"image");
+
+        let video = source_dir.join("demo.webm");
+        fs::write(&video, b"video").unwrap();
+        assert!(copy_image_file_asset(
+            Some(path_to_string(&document)),
+            path_to_string(&video),
+            Some("assets".to_string()),
+        )
+        .is_err());
+        assert_eq!(
+            copy_media_file_asset(
+                Some(path_to_string(&document)),
+                path_to_string(&video),
+                Some("assets".to_string()),
+            )
+            .unwrap(),
+            "assets/demo.webm"
+        );
+
+        fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[test]
+    fn pasted_image_assets_keep_names_and_never_fall_back_to_documents() {
+        assert!(save_data_url_asset(
+            None,
+            "screen shot.png".to_string(),
+            "data:image/png;base64,AA==".to_string(),
+            Some("assets".to_string()),
+        )
+        .is_err());
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("marko-image-data-test-{}", timestamp_millis()));
+        fs::create_dir_all(&temp_dir).unwrap();
+        let document = temp_dir.join("note.md");
+        fs::write(&document, "").unwrap();
+        let first = save_data_url_asset(
+            Some(path_to_string(&document)),
+            "screen shot.png".to_string(),
+            "data:image/png;base64,AA==".to_string(),
+            Some("assets".to_string()),
+        )
+        .unwrap();
+        let second = save_data_url_asset(
+            Some(path_to_string(&document)),
+            "screen shot.png".to_string(),
+            "data:image/png;base64,AA==".to_string(),
+            Some("assets".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(first, "assets/screen shot.png");
+        assert_eq!(second, "assets/screen shot-1.png");
+        fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[test]
+    fn media_detection_includes_typora_image_video_and_audio_extensions() {
+        for file_name in [
+            "photo.jfif",
+            "scan.tif",
+            "scan.tiff",
+            "movie.mkv",
+            "voice.flac",
+            "voice.m4a",
+            "protected.m4p",
+            "podcast.ogg",
+        ] {
+            assert!(is_media_file(Path::new(file_name)), "{file_name}");
+        }
+        assert!(is_image_file(Path::new("photo.jfif")));
+        assert!(is_image_file(Path::new("scan.tif")));
+        assert!(is_image_file(Path::new("scan.tiff")));
+        assert_eq!(
+            get_local_media_kind(Path::new("movie.mkv")),
+            Some(LocalMediaKind::Video)
+        );
+        for file_name in ["voice.m4a", "protected.m4p", "podcast.ogg"] {
+            assert_eq!(
+                get_local_media_kind(Path::new(file_name)),
+                Some(LocalMediaKind::Audio),
+                "{file_name}"
+            );
+        }
+        assert_eq!(get_local_media_kind(Path::new("voice.w4a")), None);
+        assert!(!is_media_file(Path::new("archive.zip")));
     }
 }

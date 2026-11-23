@@ -1,4 +1,5 @@
 import { buildTableRow, splitTableRow } from "./editorCommands";
+import { getLeadingMarkdownIndent, readMarkdownContainerPrefix } from "./markdownIndent";
 
 export type TableAlignment = "left" | "center" | "right";
 
@@ -8,6 +9,8 @@ export interface VisualTableModel {
   alignments: TableAlignment[];
   leadingPipe: boolean;
   trailingPipe: boolean;
+  linePrefix: string;
+  continuationLinePrefix?: string;
   lineEnding: "\n" | "\r\n";
   trailingEnding: string;
 }
@@ -19,15 +22,20 @@ export function parseVisualTable(source: string): VisualTableModel | null {
   const lines = content.split(/\r?\n/);
   if (lines.length < 2) return null;
 
-  const headers = splitTableRow(lines[0]);
-  const separators = splitTableRow(lines[1]);
-  if (headers.length < 2 || separators.length !== headers.length) return null;
-  if (!separators.every((cell) => /^:?-{3,}:?$/.test(cell.trim()))) return null;
+  const linePrefix = getVisualTableLinePrefix(lines[0], true);
+  const continuationLinePrefix = getVisualTableLinePrefix(lines[1]);
+  const headers = splitTableRow(lines[0].slice(linePrefix.length));
+  const separators = splitTableRow(lines[1].slice(continuationLinePrefix.length));
+  if (headers.length < 1 || separators.length !== headers.length) return null;
+  if (!separators.every((cell) => /^:?-+:?$/.test(cell.trim()))) return null;
 
-  const first = lines[0].trim();
+  const first = lines[0].slice(linePrefix.length).trim();
   const leadingPipe = first.startsWith("|");
   const trailingPipe = hasUnescapedTrailingPipe(first);
-  const rows = lines.slice(2).map((line) => padRow(splitTableRow(line), headers.length));
+  const rows = lines.slice(2).map((line) => {
+    const prefix = getVisualTableLinePrefix(line);
+    return padRow(splitTableRow(line.slice(prefix.length)), headers.length);
+  });
 
   return {
     headers: padRow(headers, headers.length),
@@ -35,6 +43,8 @@ export function parseVisualTable(source: string): VisualTableModel | null {
     alignments: separators.map(parseAlignment),
     leadingPipe,
     trailingPipe,
+    linePrefix,
+    continuationLinePrefix,
     lineEnding,
     trailingEnding,
   };
@@ -42,11 +52,14 @@ export function parseVisualTable(source: string): VisualTableModel | null {
 
 export function serializeVisualTable(table: VisualTableModel): string {
   const format = { leadingPipe: table.leadingPipe, trailingPipe: table.trailingPipe };
-  const columnCount = Math.max(2, table.headers.length);
+  const continuationPrefix = table.continuationLinePrefix ?? table.linePrefix;
+  const columnCount = Math.max(1, table.headers.length);
   const lines = [
-    buildTableRow(padRow(table.headers, columnCount).map(escapeTableCell), format),
-    buildTableRow(padRow(table.alignments.map(formatAlignment), columnCount), format),
-    ...table.rows.map((row) => buildTableRow(padRow(row, columnCount).map(escapeTableCell), format)),
+    `${table.linePrefix}${buildTableRow(padRow(table.headers, columnCount).map(escapeTableCell), format)}`,
+    `${continuationPrefix}${buildTableRow(padRow(table.alignments.map(formatAlignment), columnCount), format)}`,
+    ...table.rows.map((row) => (
+      `${continuationPrefix}${buildTableRow(padRow(row, columnCount).map(escapeTableCell), format)}`
+    )),
   ];
   return `${lines.join(table.lineEnding)}${table.trailingEnding}`;
 }
@@ -57,7 +70,7 @@ export function resizeVisualTable(
   columns: number,
 ): VisualTableModel {
   const rowCount = Math.max(1, Math.round(rows));
-  const columnCount = Math.max(2, Math.round(columns));
+  const columnCount = Math.max(1, Math.round(columns));
   return {
     ...table,
     headers: padRow(table.headers, columnCount).slice(0, columnCount),
@@ -107,7 +120,7 @@ export function insertVisualTableColumn(table: VisualTableModel, column: number)
 }
 
 export function deleteVisualTableColumn(table: VisualTableModel, column: number): VisualTableModel {
-  if (table.headers.length <= 2) return table;
+  if (table.headers.length <= 1) return table;
   const next = cloneTable(table);
   const target = Math.max(0, Math.min(next.headers.length - 1, column));
   next.headers.splice(target, 1);
@@ -180,6 +193,18 @@ function formatAlignment(alignment: TableAlignment): string {
 
 function normalizeCellValue(value: string): string {
   return value.replace(/\r?\n/g, "<br>").trim();
+}
+
+function getVisualTableLinePrefix(line: string, allowListMarker = false): string {
+  if (allowListMarker) {
+    const container = readMarkdownContainerPrefix(line);
+    if (container.listDepth > 0 && container.content.trimStart().startsWith("|")) {
+      const indent = getLeadingMarkdownIndent(container.content);
+      return line.slice(0, container.prefixLength + indent.length);
+    }
+  }
+  const match = line.match(/^(?:(?: {0,3}>[ \t]?)+)?[ \t]*/);
+  return match?.[0] ?? "";
 }
 
 function escapeTableCell(value: string): string {

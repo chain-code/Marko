@@ -1,8 +1,8 @@
 import type { EditorCommand } from "@/types";
 
-export interface EditorContextMenuAction {
+export interface EditorContextMenuAction<TCommand extends string = EditorCommand> {
   type: "action";
-  command: EditorCommand;
+  command: TCommand;
   label: string;
   shortcut?: string;
 }
@@ -11,7 +11,16 @@ export interface EditorContextMenuSeparator {
   type: "separator";
 }
 
-export type EditorContextMenuItem = EditorContextMenuAction | EditorContextMenuSeparator;
+export type EditorContextMenuItem<TCommand extends string = EditorCommand> =
+  | EditorContextMenuAction<TCommand>
+  | EditorContextMenuSeparator;
+
+export type RawBlockContextMenuCommand =
+  | "copyRawBlockContent"
+  | "indentRawBlockSelection"
+  | "indentRawBlockAll";
+
+export type EditorContextMenuCommand = EditorCommand | RawBlockContextMenuCommand;
 
 export const editorContextMenuWidth = 236;
 export const editorContextMenuPadding = 12;
@@ -39,6 +48,34 @@ export const editorContextMenuItems: EditorContextMenuItem[] = [
   { type: "action", command: "inlineCode", label: "行内代码", shortcut: "Ctrl+Shift+`" },
   { type: "action", command: "clearFormat", label: "清除格式", shortcut: "Ctrl+\\" },
 ];
+
+export const rawBlockContextMenuItems: EditorContextMenuItem<RawBlockContextMenuCommand>[] = [
+  { type: "action", command: "copyRawBlockContent", label: "复制代码块内容" },
+  { type: "action", command: "indentRawBlockSelection", label: "为选中内容调整缩进" },
+  { type: "action", command: "indentRawBlockAll", label: "为整个代码块调整缩进" },
+];
+
+export function getEditorContextMenuItems(
+  includeRawBlockTools: boolean,
+): EditorContextMenuItem<EditorContextMenuCommand>[] {
+  if (!includeRawBlockTools) return editorContextMenuItems;
+  const insertionIndex = editorContextMenuItems.findIndex((item) => (
+    item.type === "action" && item.command === "copyPlainText"
+  )) + 1;
+  return [
+    ...editorContextMenuItems.slice(0, insertionIndex),
+    ...rawBlockContextMenuItems,
+    ...editorContextMenuItems.slice(insertionIndex),
+  ];
+}
+
+export function isRawBlockContextMenuCommand(
+  command: EditorContextMenuCommand,
+): command is RawBlockContextMenuCommand {
+  return command === "copyRawBlockContent"
+    || command === "indentRawBlockSelection"
+    || command === "indentRawBlockAll";
+}
 
 export function clampEditorContextMenuPosition(
   x: number,

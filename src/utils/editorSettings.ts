@@ -1,15 +1,22 @@
 import type {
+  DefaultCodeLanguageApplyTo,
   EditorSettings,
   EmojiAutocompleteMode,
   ImageInsertAction,
   LineEnding,
+  MarkdownExtensionSettings,
+  MathAutoNumbering,
   SidebarTab,
 } from "@/types";
+import {
+  normalizeDefaultCodeLanguage,
+  normalizeDefaultCodeLanguageApplyTo,
+} from "./codeLanguagePreference";
 
 export const defaultEditorSettings: EditorSettings = {
   theme: "solo",
   fontSize: 16,
-  lineWidth: 820,
+  lineWidth: 860,
   zoom: 1,
   autoSave: true,
   autoSaveIntervalMinutes: 3,
@@ -29,14 +36,20 @@ export const defaultEditorSettings: EditorSettings = {
   typewriterMode: false,
   typewriterCenter: true,
   indentSize: 2,
+  codeIndentSize: 4,
+  shiftTabAutoIndent: false,
   autoPair: true,
   emojiAutocomplete: "automatic",
-  copyMarkdownAsPlainText: true,
+  copyMarkdownAsPlainText: false,
   preserveSingleLineBreaks: false,
   smartPunctuation: true,
+  smartQuotes: true,
+  smartDashes: true,
+  autoNumberingForMath: false,
   codeLineNumbers: false,
   codeWrap: false,
   defaultCodeLanguage: "",
+  defaultCodeLanguageApplyTo: "markdown",
   imageInsertAction: "assets",
   escapeImageUrls: true,
   addDotSlashToRelativeImagePath: false,
@@ -47,11 +60,15 @@ export const defaultEditorSettings: EditorSettings = {
     toc: true,
     mermaid: true,
     flowchart: true,
+    sequence: true,
     math: true,
     footnote: true,
     alerts: true,
     emoji: true,
-    marks: true,
+    marks: false,
+    highlight: false,
+    superscript: false,
+    subscript: false,
     autoLinks: true,
   },
 };
@@ -61,6 +78,13 @@ export function parseEditorSettings(raw: string | null): EditorSettings {
 
   try {
     const parsed = JSON.parse(raw) as Partial<EditorSettings>;
+    const parsedExtensions = parsed.extensions as Partial<EditorSettings["extensions"]> | undefined;
+    const legacyMarks = typeof parsedExtensions?.marks === "boolean"
+      ? parsedExtensions.marks
+      : undefined;
+    const legacySmartPunctuation = typeof parsed.smartPunctuation === "boolean"
+      ? parsed.smartPunctuation
+      : undefined;
     return {
       ...defaultEditorSettings,
       ...parsed,
@@ -70,17 +94,60 @@ export function parseEditorSettings(raw: string | null): EditorSettings {
       autoSaveIntervalMinutes: normalizeAutoSaveInterval(parsed.autoSaveIntervalMinutes),
       defaultLineEnding: normalizeLineEnding(parsed.defaultLineEnding),
       indentSize: normalizeIndentSize(parsed.indentSize),
-      defaultCodeLanguage: normalizeCodeLanguage(parsed.defaultCodeLanguage),
+      codeIndentSize: normalizeCodeIndentSize(parsed.codeIndentSize),
+      shiftTabAutoIndent: parsed.shiftTabAutoIndent === true,
+      defaultCodeLanguage: normalizeDefaultCodeLanguage(parsed.defaultCodeLanguage),
+      defaultCodeLanguageApplyTo: getDefaultCodeLanguageApplyTo(parsed),
       emojiAutocomplete: normalizeEmojiAutocomplete(parsed.emojiAutocomplete),
+      autoNumberingForMath: normalizeMathAutoNumbering(parsed.autoNumberingForMath),
       imageInsertAction: normalizeImageInsertAction(parsed.imageInsertAction),
+      smartQuotes: typeof parsed.smartQuotes === "boolean"
+        ? parsed.smartQuotes
+        : legacySmartPunctuation ?? defaultEditorSettings.smartQuotes,
+      smartDashes: typeof parsed.smartDashes === "boolean"
+        ? parsed.smartDashes
+        : legacySmartPunctuation ?? defaultEditorSettings.smartDashes,
       extensions: {
         ...defaultEditorSettings.extensions,
-        ...parsed.extensions,
+        ...parsedExtensions,
+        marks: false,
+        highlight: typeof parsedExtensions?.highlight === "boolean"
+          ? parsedExtensions.highlight
+          : legacyMarks ?? defaultEditorSettings.extensions.highlight,
+        superscript: typeof parsedExtensions?.superscript === "boolean"
+          ? parsedExtensions.superscript
+          : legacyMarks ?? defaultEditorSettings.extensions.superscript,
+        subscript: typeof parsedExtensions?.subscript === "boolean"
+          ? parsedExtensions.subscript
+          : legacyMarks ?? defaultEditorSettings.extensions.subscript,
       },
     };
   } catch {
     return cloneDefaultEditorSettings();
   }
+}
+
+type InlineMarkExtensionSettings = Pick<
+  MarkdownExtensionSettings,
+  "marks" | "highlight" | "superscript" | "subscript"
+>;
+
+export function isHighlightExtensionEnabled(settings: InlineMarkExtensionSettings): boolean {
+  return settings.highlight || settings.marks;
+}
+
+export function isSuperscriptExtensionEnabled(settings: InlineMarkExtensionSettings): boolean {
+  return settings.superscript || settings.marks;
+}
+
+export function isSubscriptExtensionEnabled(settings: InlineMarkExtensionSettings): boolean {
+  return settings.subscript || settings.marks;
+}
+
+export function hasInlineMarkExtensions(settings: InlineMarkExtensionSettings): boolean {
+  return isHighlightExtensionEnabled(settings)
+    || isSuperscriptExtensionEnabled(settings)
+    || isSubscriptExtensionEnabled(settings);
 }
 
 export function prepareMarkdownForSave(
@@ -129,9 +196,15 @@ export function formatInsertedImageSource(
   const prefixed = addDotSlash && isPlainRelativeImagePath(normalized) ? `./${normalized}` : normalized;
   if (!escapeUrl || /^(?:data|blob):/i.test(prefixed)) return prefixed;
   try {
-    return encodeURI(decodeURI(prefixed)).replace(/#/g, "%23");
+    return encodeURI(decodeURI(prefixed))
+      .replace(/#/g, "%23")
+      .replace(/\(/g, "%28")
+      .replace(/\)/g, "%29");
   } catch {
-    return encodeURI(prefixed).replace(/#/g, "%23");
+    return encodeURI(prefixed)
+      .replace(/#/g, "%23")
+      .replace(/\(/g, "%28")
+      .replace(/\)/g, "%29");
   }
 }
 
@@ -158,12 +231,22 @@ function normalizeEmojiAutocomplete(value: unknown): EmojiAutocompleteMode {
   return value === "escape" || value === "off" ? value : "automatic";
 }
 
+function normalizeMathAutoNumbering(value: unknown): MathAutoNumbering {
+  if (value === "ams") return "ams";
+  if (value === true || value === "all") return "all";
+  return false;
+}
+
 function normalizeImageInsertAction(value: unknown): ImageInsertAction {
   return value === "none" || value === "current" || value === "documentAssets" ? value : "assets";
 }
 
 function normalizeIndentSize(value: unknown): number {
   return value === 4 ? 4 : 2;
+}
+
+function normalizeCodeIndentSize(value: unknown): number {
+  return value === 2 || value === 3 || value === 5 ? value : 4;
 }
 
 function normalizeReadingSpeed(value: unknown): number {
@@ -174,6 +257,11 @@ function normalizeAutoSaveInterval(value: unknown): number {
   return value === 1 || value === 5 || value === 10 ? value : 3;
 }
 
-function normalizeCodeLanguage(value: unknown): string {
-  return typeof value === "string" ? value.trim().replace(/[^a-z0-9_+#.-]/gi, "").slice(0, 32) : "";
+function getDefaultCodeLanguageApplyTo(
+  parsed: Partial<EditorSettings>,
+): DefaultCodeLanguageApplyTo {
+  if (parsed.defaultCodeLanguageApplyTo !== undefined) {
+    return normalizeDefaultCodeLanguageApplyTo(parsed.defaultCodeLanguageApplyTo);
+  }
+  return normalizeDefaultCodeLanguage(parsed.defaultCodeLanguage) ? "menu" : "markdown";
 }

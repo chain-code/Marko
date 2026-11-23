@@ -1,3 +1,5 @@
+import { getYamlFrontMatterRange } from "./frontMatterSyntax";
+
 export function buildFrontMatterSnippet(now = new Date()): string {
   return `---\ntitle: 新文档\ndate: ${formatLocalDate(now)}\n---\n\n`;
 }
@@ -37,8 +39,8 @@ function formatLocalDate(date: Date): string {
 }
 
 function getFrontMatterRange(value: string): { start: number; end: number } | null {
-  const match = value.match(/^\uFEFF?---[^\S\r\n]*(?:\r?\n)[\s\S]*?(?:\r?\n)---[^\S\r\n]*(?:\r?\n|$)/);
-  return match ? { start: 0, end: match[0].length } : null;
+  const range = getYamlFrontMatterRange(value);
+  return range ? { start: range.start, end: range.end } : null;
 }
 
 function getPreferredLineBreak(value: string): "\n" | "\r\n" {

@@ -1,5 +1,14 @@
+import { markdownLanguage } from "@codemirror/lang-markdown";
+import MarkdownIt from "markdown-it";
+import { splitMarkdownBlocks } from "./editorBlocks";
 import { isMarkdownPathLike } from "./markdownFiles";
 import { getPreviewLinkAction } from "./previewLinks";
+
+const markdownReferenceParser = new MarkdownIt();
+const defaultReferenceValidateLink = markdownReferenceParser.validateLink.bind(markdownReferenceParser);
+markdownReferenceParser.validateLink = (url) => (
+  getPreviewLinkAction(url) === "local" || defaultReferenceValidateLink(url)
+);
 
 export interface MarkdownLinkRange {
   start: number;
@@ -11,6 +20,12 @@ export interface MarkdownLinkRange {
   referenceLabel: string | null;
   imageStart: number | null;
   label: string;
+}
+
+export interface MarkdownLinkDestination {
+  href: string;
+  title: string | null;
+  angleWrapped: boolean;
 }
 
 export interface MarkdownLinkAtCursor {
@@ -33,6 +48,12 @@ export function replaceMarkdownLinkSyntax(
     if (open < 0) {
       result += value.slice(cursor);
       break;
+    }
+
+    if (isEscapedAt(value, open)) {
+      result += value.slice(cursor, open + 1);
+      cursor = open + 1;
+      continue;
     }
 
     const link = readMarkdownInlineLink(value, open) ?? readMarkdownReferenceLink(value, open);
@@ -65,7 +86,9 @@ export function readMarkdownInlineLink(value: string, openBracket: number): Mark
     destinationStart: closeBracket + 2,
     destinationEnd: end - 1,
     referenceLabel: null,
-    imageStart: value[openBracket - 1] === "!" ? openBracket - 1 : null,
+    imageStart: value[openBracket - 1] === "!" && !isEscapedAt(value, openBracket - 1)
+      ? openBracket - 1
+      : null,
     label: value.slice(openBracket + 1, closeBracket),
   };
 }
@@ -85,7 +108,9 @@ export function readMarkdownReferenceLink(value: string, openBracket: number): M
     destinationStart: null,
     destinationEnd: null,
     referenceLabel: value.slice(closeBracket + 2, closeReference),
-    imageStart: value[openBracket - 1] === "!" ? openBracket - 1 : null,
+    imageStart: value[openBracket - 1] === "!" && !isEscapedAt(value, openBracket - 1)
+      ? openBracket - 1
+      : null,
     label: value.slice(openBracket + 1, closeBracket),
   };
 }
@@ -104,7 +129,9 @@ export function readMarkdownShortcutReferenceLink(value: string, openBracket: nu
     destinationStart: null,
     destinationEnd: null,
     referenceLabel: value.slice(openBracket + 1, closeBracket),
-    imageStart: value[openBracket - 1] === "!" ? openBracket - 1 : null,
+    imageStart: value[openBracket - 1] === "!" && !isEscapedAt(value, openBracket - 1)
+      ? openBracket - 1
+      : null,
     label: value.slice(openBracket + 1, closeBracket),
   };
 }
@@ -113,12 +140,25 @@ export function findMarkdownLinkAtCursor(
   value: string,
   selectionStart: number,
   selectionEnd: number,
+  includeBareLinks = true,
 ): MarkdownLinkAtCursor | null {
   const normalizedStart = Math.max(0, Math.min(selectionStart, selectionEnd));
   const normalizedEnd = Math.max(0, Math.max(selectionStart, selectionEnd));
+  const parsedLinks = collectParsedMarkdownLinkRanges(value);
 
   for (const link of collectMarkdownLinks(value)) {
     const linkStart = link.imageStart ?? link.start;
+    const kind = link.imageStart === null ? "Link" : "Image";
+    const parsedFullLink = parsedLinks.has(`${kind}:${linkStart}:${link.end}`);
+    const parsedLabel = parsedLinks.has(
+      `${kind}:${linkStart}:${link.labelEnd + 1}`,
+    );
+    if (
+      !parsedFullLink
+      && !(parsedLabel && isUnwrappedMarkdownLinkDestinationWithSpaces(value, link))
+    ) {
+      continue;
+    }
     if (!isSelectionInsideRange(normalizedStart, normalizedEnd, linkStart, link.end)) {
       continue;
     }
@@ -137,7 +177,14 @@ export function findMarkdownLinkAtCursor(
     };
   }
 
-  return findBareLinkAtCursor(value, normalizedStart, normalizedEnd);
+  return includeBareLinks
+    ? findBareLinkAtCursor(
+      value,
+      normalizedStart,
+      normalizedEnd,
+      collectMarkdownLiteralRanges(value),
+    )
+    : null;
 }
 
 function collectMarkdownLinks(value: string): MarkdownLinkRange[] {
@@ -146,6 +193,10 @@ function collectMarkdownLinks(value: string): MarkdownLinkRange[] {
   while (cursor < value.length) {
     const open = value.indexOf("[", cursor);
     if (open < 0) break;
+    if (isEscapedAt(value, open)) {
+      cursor = open + 1;
+      continue;
+    }
 
     const link = readMarkdownInlineLink(value, open)
       ?? readMarkdownReferenceLink(value, open)
@@ -161,63 +212,120 @@ function collectMarkdownLinks(value: string): MarkdownLinkRange[] {
   return links;
 }
 
+function collectParsedMarkdownLinkRanges(value: string): Set<string> {
+  const ranges = new Set<string>();
+  markdownLanguage.parser.parse(value).iterate({
+    enter(node) {
+      if (node.name === "Link" || node.name === "Image") {
+        ranges.add(`${node.name}:${node.from}:${node.to}`);
+      }
+    },
+  });
+  return ranges;
+}
+
 function getMarkdownLinkHref(value: string, link: MarkdownLinkRange): string | null {
   if (link.destinationStart !== null && link.destinationEnd !== null) {
-    return parseMarkdownLinkDestination(value.slice(link.destinationStart, link.destinationEnd));
+    const destination = parseMarkdownLinkDestination(
+      value.slice(link.destinationStart, link.destinationEnd),
+    );
+    const href = destination
+      ? markdownReferenceParser.utils.unescapeAll(destination.href)
+      : "";
+    return href && getPreviewLinkAction(href) !== "blocked"
+      ? href
+      : null;
   }
 
   const referenceLabel = link.referenceLabel || link.label;
   return findMarkdownReferenceHref(value, referenceLabel);
 }
 
-function parseMarkdownLinkDestination(body: string): string | null {
+export function parseMarkdownLinkDestination(body: string): MarkdownLinkDestination | null {
   const trimmed = body.trim();
   if (!trimmed) return null;
 
   if (trimmed.startsWith("<")) {
     const close = findUnescapedCharacter(trimmed, ">", 1);
     if (close < 0) return null;
-    return trimmed.slice(1, close).trim() || null;
+    const href = trimmed.slice(1, close).trim();
+    if (!href) return null;
+    const remainder = trimmed.slice(close + 1).trim();
+    if (!remainder) return { href, title: null, angleWrapped: true };
+    const title = readTrailingMarkdownDestinationTitle(remainder);
+    if (!title || title.start !== 0) return null;
+    return { href, title: title.value, angleWrapped: true };
   }
 
-  const split = findMarkdownDestinationTitleStart(trimmed);
-  const href = split < 0 ? trimmed : trimmed.slice(0, split).trim();
-  return href || null;
+  const trailingTitle = readTrailingMarkdownDestinationTitle(trimmed);
+  const title = trailingTitle && trailingTitle.start > 0 ? trailingTitle : null;
+  const href = (title ? trimmed.slice(0, title.start) : trimmed).trim();
+  return href
+    ? { href, title: title?.value ?? null, angleWrapped: false }
+    : null;
+}
+
+export function isUnwrappedMarkdownLinkDestinationWithSpaces(
+  value: string,
+  link: MarkdownLinkRange,
+): boolean {
+  if (link.destinationStart === null || link.destinationEnd === null) return false;
+  const destination = parseMarkdownLinkDestination(
+    value.slice(link.destinationStart, link.destinationEnd),
+  );
+  return Boolean(
+    destination
+    && !destination.angleWrapped
+    && /[ \t]/.test(destination.href),
+  );
 }
 
 function findMarkdownReferenceHref(value: string, label: string): string | null {
-  const normalizedLabel = normalizeReferenceLabel(label);
+  const normalizedLabel = markdownReferenceParser.utils.normalizeReference(label);
   if (!normalizedLabel) return null;
 
-  const lines = value.split(/\r?\n/);
-  for (const line of lines) {
-    const match = line.match(/^[ \t]{0,3}\[([^\]\n]+)]:[ \t]*(.+?)\s*$/);
-    if (!match || match[1].startsWith("^")) continue;
-    if (normalizeReferenceLabel(match[1]) !== normalizedLabel) continue;
-    return parseMarkdownLinkDestination(match[2]);
+  const env: { references?: Record<string, { href?: unknown }> } = {};
+  markdownReferenceParser.parse(value, env);
+  const href = env.references?.[normalizedLabel]?.href;
+  return typeof href === "string" && href ? href : null;
+}
+
+function readTrailingMarkdownDestinationTitle(
+  value: string,
+): { start: number; value: string } | null {
+  const close = value[value.length - 1];
+  if (close === "\"" || close === "'") {
+    for (let index = value.length - 2; index >= 0; index -= 1) {
+      if (value[index] !== close || isEscapedAt(value, index)) continue;
+      if (index > 0 && !/\s/.test(value[index - 1] ?? "")) return null;
+      return {
+        start: index,
+        value: value.slice(index + 1, -1),
+      };
+    }
+    return null;
+  }
+
+  if (close === ")") {
+    let depth = 1;
+    for (let index = value.length - 2; index >= 0; index -= 1) {
+      if (isEscapedAt(value, index)) continue;
+      if (value[index] === ")") {
+        depth += 1;
+        continue;
+      }
+      if (value[index] !== "(") continue;
+      depth -= 1;
+      if (depth > 0) continue;
+      if (index > 0 && !/\s/.test(value[index - 1] ?? "")) return null;
+      return {
+        start: index,
+        value: value.slice(index + 1, -1),
+      };
+    }
   }
 
   return null;
-}
-
-function findMarkdownDestinationTitleStart(value: string): number {
-  let depth = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    const char = value[index];
-    if (isEscapedAt(value, index)) continue;
-    if (char === "(") {
-      depth += 1;
-      continue;
-    }
-    if (char === ")") {
-      depth = Math.max(0, depth - 1);
-      continue;
-    }
-    if (depth === 0 && /\s/.test(char)) {
-      return index;
-    }
-  }
-  return -1;
 }
 
 function findUnescapedCharacter(value: string, character: string, start: number): number {
@@ -227,10 +335,6 @@ function findUnescapedCharacter(value: string, character: string, start: number)
     }
   }
   return -1;
-}
-
-function normalizeReferenceLabel(label: string): string {
-  return label.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function isSelectionInsideRange(selectionStart: number, selectionEnd: number, rangeStart: number, rangeEnd: number): boolean {
@@ -244,6 +348,7 @@ function findBareLinkAtCursor(
   value: string,
   selectionStart: number,
   selectionEnd: number,
+  protectedRanges: Array<{ start: number; end: number }>,
 ): MarkdownLinkAtCursor | null {
   if (selectionStart < 0 || selectionEnd > value.length) return null;
 
@@ -262,12 +367,39 @@ function findBareLinkAtCursor(
   });
 
   for (const candidate of candidates) {
+    if (protectedRanges.some((range) => (
+      candidate.start < range.end && candidate.end > range.start
+    ))) {
+      continue;
+    }
     if (isSelectionInsideRange(selectionStart, selectionEnd, candidate.start, candidate.end)) {
       return candidate;
     }
   }
 
   return null;
+}
+
+function collectMarkdownLiteralRanges(value: string): Array<{ start: number; end: number }> {
+  const ranges = splitMarkdownBlocks(value)
+    .filter((block) => ["code", "math", "html", "frontmatter"].includes(block.type))
+    .map((block) => ({ start: block.start, end: block.end }));
+  const literalSyntaxNames = new Set([
+    "InlineCode",
+    "FencedCode",
+    "CodeBlock",
+    "IndentedCode",
+    "HTMLBlock",
+    "HTMLTag",
+  ]);
+  markdownLanguage.parser.parse(value).iterate({
+    enter(node) {
+      if (literalSyntaxNames.has(node.name)) {
+        ranges.push({ start: node.from, end: node.to });
+      }
+    },
+  });
+  return ranges;
 }
 
 function collectAngleBareLinks(line: string, lineOffset: number): MarkdownLinkAtCursor[] {

@@ -1,16 +1,16 @@
 <template>
   <div
     class="app-shell"
-    :class="{ 'focus-layout': effectiveSettings.focusMode, 'is-dragging': dragActive }"
+    :class="{ 'focus-layout': settings.focusMode, 'is-dragging': dragActive }"
     @dragenter.prevent="handleDragEnter"
     @dragover.prevent
     @dragleave.prevent="handleDragLeave"
     @drop.prevent="handleAppDrop"
   >
     <AppToolbar
-      :source-mode="effectiveSettings.sourceMode"
-      :focus-mode="effectiveSettings.focusMode"
-      :typewriter-mode="effectiveSettings.typewriterMode"
+      :source-mode="settings.sourceMode"
+      :focus-mode="settings.focusMode"
+      :typewriter-mode="settings.typewriterMode"
       :sidebar-visible="sidebarVisible"
       :sidebar-active-tab="sidebarActiveTab"
       :file-panel-mode="filePanelMode"
@@ -68,11 +68,11 @@
 
     <main
       class="workspace"
-      :class="{ 'no-sidebar': !sidebarVisible || effectiveSettings.focusMode || effectiveSettings.sourceMode }"
+      :class="{ 'no-sidebar': !sidebarLayoutVisible }"
       :style="workspaceStyle"
     >
       <AppSidebar
-        v-if="sidebarVisible && !effectiveSettings.focusMode && !effectiveSettings.sourceMode"
+        v-if="sidebarLayoutVisible"
         ref="sidebarRef"
         :active-tab="sidebarActiveTab"
         :file-mode="filePanelMode"
@@ -100,7 +100,7 @@
         @update:search-query="searchQuery = $event"
       />
       <div
-        v-if="sidebarVisible && !effectiveSettings.focusMode && !effectiveSettings.sourceMode"
+        v-if="sidebarLayoutVisible"
         class="sidebar-resizer"
         role="separator"
         aria-orientation="vertical"
@@ -136,7 +136,7 @@
             <button
               type="button"
               class="status-icon"
-              :class="{ active: sidebarVisible && !effectiveSettings.focusMode && !effectiveSettings.sourceMode }"
+              :class="{ active: sidebarLayoutVisible }"
               title="显示或隐藏侧边栏 Ctrl+Shift+L"
               @click="sidebarVisible = !sidebarVisible"
             >
@@ -145,7 +145,7 @@
             <button
               type="button"
               class="status-icon"
-              :class="{ active: effectiveSettings.sourceMode }"
+              :class="{ active: settings.sourceMode }"
               title="切换源代码模式 Ctrl+/"
               @click="patchSettings({ sourceMode: !settings.sourceMode })"
             >
@@ -154,7 +154,7 @@
             <button
               type="button"
               class="status-icon"
-              :class="{ active: effectiveSettings.focusMode }"
+              :class="{ active: settings.focusMode }"
               title="切换专注模式 F8"
               @click="patchSettings({ focusMode: !settings.focusMode })"
             >
@@ -163,7 +163,7 @@
             <button
               type="button"
               class="status-icon"
-              :class="{ active: effectiveSettings.typewriterMode }"
+              :class="{ active: settings.typewriterMode }"
               title="切换打字机模式 F9"
               @click="patchSettings({ typewriterMode: !settings.typewriterMode })"
             >
@@ -496,7 +496,7 @@ import { isMarkdownFileLike, isMarkdownPathLike } from "@/utils/markdownFiles";
 import { normalizeFolderName, normalizeRenameFileName } from "@/utils/fileRename";
 import { buildMarkdownFileLink, resolveDocumentRelativePath } from "@/utils/markdownFileLinks";
 import { findOutlineItemByAnchor, getActiveOutlineId, getOutlineSelectionRange } from "@/utils/outline";
-import { getPreviewLinkAction, resolveLocalMarkdownHref } from "@/utils/previewLinks";
+import { getPreviewHrefAnchor, getPreviewLinkAction, resolveLocalMarkdownHref } from "@/utils/previewLinks";
 import { clampQuickOpenIndex, moveQuickOpenIndex } from "@/utils/quickOpen";
 import {
   createEditorViewStateCache,
@@ -523,7 +523,12 @@ import {
   shouldAutoSaveDocument,
 } from "@/utils/editorSettings";
 import {
+  buildLocalMediaMarkup,
+  getLocalMediaKind,
+} from "@/utils/localMedia";
+import {
   copyImageFileAsset,
+  copyMediaFileAsset,
   createFolder,
   createMarkdownFile,
   destroyCurrentWindow,
@@ -550,6 +555,7 @@ import {
   searchMarkdownFiles,
   trashPath,
   toggleNativeFullscreen,
+  type NativeFileDrop,
   writeTextFile,
 } from "@/services/desktop";
 import { createOutline } from "@/utils/markdown";
@@ -572,6 +578,7 @@ import type {
   FilePanelMode,
   ImageInsertRequest,
   ImagePayload,
+  LocalMediaKind,
   OutlineItem,
   RecentFile,
   SearchResult,
@@ -586,6 +593,8 @@ interface ContinuousEditorHandle {
   insertImageMarkdown: (src: string, alt?: string) => void;
   reserveImageInsertion: () => string | null;
   replaceImagePlaceholder: (placeholder: string, src: string | null, alt?: string) => boolean;
+  replaceMediaPlaceholder: (placeholder: string, markup: string | null) => boolean;
+  setCursorAtCoordinates: (x: number, y: number) => boolean;
   insertText: (text: string) => void;
   replaceDocument: (value: string) => void;
   selectRange: (start: number, end: number, focus?: boolean) => Promise<void>;
@@ -699,9 +708,11 @@ let toastTimer = 0;
 let autoSaveTimer = 0;
 let autoSaveScheduleKey = "";
 let saveInFlight: Promise<void> | null = null;
+let mediaDocumentSaveInFlight: Promise<boolean> | null = null;
 let dragDepth = 0;
 let unlistenNativeDrop: (() => void) | null = null;
 let unlistenWindowClose: (() => void) | null = null;
+let sidebarResizeCleanup: (() => void) | null = null;
 let pendingUnsavedResolver: ((decision: UnsavedChangesDecision) => void) | null = null;
 let pendingTextInputResolver: ((value: string | null) => void) | null = null;
 let pendingConfirmActionResolver: ((value: boolean) => void) | null = null;
@@ -735,6 +746,9 @@ const effectiveSettings = computed<EditorSettings>(() => ({
   ...settings.value,
   fontSize: Math.round(settings.value.fontSize * settings.value.zoom),
 }));
+const sidebarLayoutVisible = computed(() => (
+  sidebarVisible.value && !settings.value.focusMode && !settings.value.sourceMode
+));
 const workspaceStyle = computed(() => ({
   "--sidebar-width": `${sidebarWidth.value}px`,
 }));
@@ -891,6 +905,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  cleanupSidebarResize();
   window.removeEventListener("keydown", handleGlobalKeydown);
   window.removeEventListener("beforeunload", handleBeforeUnload);
   unlistenNativeDrop?.();
@@ -1709,12 +1724,12 @@ async function selectSourceRange(start: number, end: number) {
   await editorRef.value?.selectRange(start, end);
 }
 
-async function openLinkedMarkdownFile(path: string) {
+async function openLinkedMarkdownFile(path: string): Promise<boolean> {
   if (!isTauriRuntime()) {
     showToast("浏览器预览模式无法直接打开本地相对链接", "info");
-    return;
+    return false;
   }
-  await openFileByPath(path);
+  return openFileByPath(path);
 }
 
 async function openCurrentMarkdownLink(href: string) {
@@ -1726,7 +1741,12 @@ async function openCurrentMarkdownLink(href: string) {
 
   const markdownPath = resolveLocalMarkdownHref(href, currentFilePath.value || undefined);
   if (markdownPath) {
-    await openLinkedMarkdownFile(markdownPath);
+    const opened = await openLinkedMarkdownFile(markdownPath);
+    const anchor = getPreviewHrefAnchor(href);
+    if (opened && anchor) {
+      await nextTick();
+      await openDocumentAnchor(anchor);
+    }
     return;
   }
 
@@ -1763,7 +1783,7 @@ function openExternalLink(href: string) {
   }
 }
 
-async function executeCommand(command: EditorCommand) {
+async function executeCommand(command: EditorCommand, payload?: string) {
   if (command === "setImageWidth") {
     const width = await requestTextInput({
       title: "设置图片宽度",
@@ -1775,7 +1795,7 @@ async function executeCommand(command: EditorCommand) {
     if (width) editorRef.value?.runCommand(command, width);
     return;
   }
-  editorRef.value?.runCommand(command);
+  editorRef.value?.runCommand(command, payload);
 }
 
 async function locateCurrentFileInTree() {
@@ -1890,9 +1910,16 @@ function createDetachedDraftSession(
 }
 
 async function handleImageData(request: ImageInsertRequest) {
-  const placeholder = request.placeholder ?? editorRef.value?.reserveImageInsertion();
+  const kind = request.kind ?? "image";
+  let placeholder = request.placeholder;
+  if (requiresSavedDocumentForMedia(kind, true)) {
+    if (placeholder) editorRef.value?.replaceMediaPlaceholder(placeholder, null);
+    placeholder = undefined;
+    if (!await ensureSavedDocumentForMedia(kind, true)) return;
+  }
+  placeholder ??= editorRef.value?.reserveImageInsertion() ?? undefined;
   if (!placeholder) {
-    showToast("编辑器尚未就绪，无法插入图片", "danger");
+    showToast("编辑器尚未就绪，无法插入媒体", "danger");
     return;
   }
   pendingImageOperations += 1;
@@ -1901,7 +1928,7 @@ async function handleImageData(request: ImageInsertRequest) {
       ? { name: request.name, dataUrl: await fileToDataUrl(request.file) }
       : { name: request.name, dataUrl: request.dataUrl };
     const targetFilePath = currentFilePath.value;
-    const uploaded = await uploadImageIfConfigured(payload);
+    const uploaded = kind === "image" ? await uploadImageIfConfigured(payload) : "";
     const saved = uploaded || (settings.value.imageInsertAction === "none"
       ? payload.dataUrl
       : await saveImageAsset(
@@ -1915,15 +1942,16 @@ async function handleImageData(request: ImageInsertRequest) {
       settings.value.escapeImageUrls,
       settings.value.addDotSlashToRelativeImagePath,
     );
-    const inserted = editorRef.value?.replaceImagePlaceholder(placeholder, src, payload.name);
+    const markup = `${request.prefix ?? ""}${buildLocalMediaMarkup(kind, src, payload.name)}`;
+    const inserted = editorRef.value?.replaceMediaPlaceholder(placeholder, markup);
     showToast(
       inserted
-        ? uploaded ? "图片已上传并插入" : "图片已插入"
-        : "图片插入位置已被移除，未插入图片",
+        ? uploaded ? "图片已上传并插入" : "媒体已插入"
+        : "媒体插入位置已被移除，未插入媒体",
       inserted ? "success" : "info",
     );
   } catch (error) {
-    editorRef.value?.replaceImagePlaceholder(placeholder, null);
+    editorRef.value?.replaceMediaPlaceholder(placeholder, null);
     showToast(formatError(error), "danger");
   } finally {
     pendingImageOperations = Math.max(0, pendingImageOperations - 1);
@@ -1931,10 +1959,15 @@ async function handleImageData(request: ImageInsertRequest) {
   }
 }
 
-async function handleImageFilePath(path: string, placeholder?: string) {
+async function handleMediaFilePath(
+  path: string,
+  kind: LocalMediaKind,
+  placeholder?: string,
+  prefix = "",
+) {
   const insertionPlaceholder = placeholder ?? editorRef.value?.reserveImageInsertion();
   if (!insertionPlaceholder) {
-    showToast("编辑器尚未就绪，无法插入图片", "danger");
+    showToast("编辑器尚未就绪，无法插入媒体", "danger");
     return;
   }
   pendingImageOperations += 1;
@@ -1942,16 +1975,19 @@ async function handleImageFilePath(path: string, placeholder?: string) {
     const targetFilePath = currentFilePath.value;
     const saved = settings.value.imageInsertAction === "none"
       ? path
-      : await copyImageFileAsset(targetFilePath || null, path, settings.value.imageInsertAction);
+      : kind === "image"
+        ? await copyImageFileAsset(targetFilePath || null, path, settings.value.imageInsertAction)
+        : await copyMediaFileAsset(targetFilePath || null, path, settings.value.imageInsertAction);
     const src = formatInsertedImageSource(
       saved,
       settings.value.escapeImageUrls,
       settings.value.addDotSlashToRelativeImagePath,
     );
-    const inserted = editorRef.value?.replaceImagePlaceholder(insertionPlaceholder, src, basename(path));
-    showToast(inserted ? "图片已插入" : "图片插入位置已被移除，未插入图片", inserted ? "success" : "info");
+    const markup = `${prefix}${buildLocalMediaMarkup(kind, src, basename(path))}`;
+    const inserted = editorRef.value?.replaceMediaPlaceholder(insertionPlaceholder, markup);
+    showToast(inserted ? "媒体已插入" : "媒体插入位置已被移除，未插入媒体", inserted ? "success" : "info");
   } catch (error) {
-    editorRef.value?.replaceImagePlaceholder(insertionPlaceholder, null);
+    editorRef.value?.replaceMediaPlaceholder(insertionPlaceholder, null);
     showToast(formatError(error), "danger");
   } finally {
     pendingImageOperations = Math.max(0, pendingImageOperations - 1);
@@ -1962,36 +1998,92 @@ async function handleImageFilePath(path: string, placeholder?: string) {
 async function insertImageFile() {
   try {
     if (isTauriRuntime()) {
-      const path = await pickImageFile();
-      if (path) await handleImageFilePath(path, editorRef.value?.reserveImageInsertion() ?? undefined);
+      const paths = await pickImageFile();
+      if (paths.length === 0 || !await ensureSavedDocumentForMedia()) return;
+      await handleMediaFilePaths(paths.map((path) => ({ path, kind: "image" })));
       return;
     }
 
-    const file = await openBrowserImageFile();
-    if (!file) return;
-    await handleImageData({
-      name: file.name || `image-${Date.now()}.png`,
-      file,
-      placeholder: editorRef.value?.reserveImageInsertion() ?? undefined,
-    });
+    const files = await openBrowserImageFile();
+    await handleMediaFiles(files, "image");
   } catch (error) {
     showToast(formatError(error), "danger");
   }
 }
 
-async function handleImageFiles(files: File[]) {
-  const requests = files.map((file) => ({
-    file,
+async function handleMediaFilePaths(
+  media: Array<{ path: string; kind: LocalMediaKind }>,
+) {
+  const requests = media.map((item, index) => ({
+    ...item,
+    prefix: index > 0 ? "\n\n" : "",
     placeholder: editorRef.value?.reserveImageInsertion() ?? undefined,
   }));
   for (const request of requests) {
-    const { file, placeholder } = request;
+    await handleMediaFilePath(
+      request.path,
+      request.kind,
+      request.placeholder,
+      request.prefix,
+    );
+  }
+}
+
+async function handleMediaFiles(files: File[], fallbackPrefix = "drop") {
+  const supported = files.flatMap((file) => {
+    const kind = getLocalMediaKind(file.name, file.type);
+    return kind ? [{ file, kind }] : [];
+  });
+  const requests = supported.map((item, index) => ({
+      ...item,
+      prefix: index > 0 ? "\n\n" : "",
+      placeholder: editorRef.value?.reserveImageInsertion() ?? undefined,
+  }));
+  for (const request of requests) {
+    const { file, kind, placeholder, prefix } = request;
     await handleImageData({
-      name: file.name || `drop-${Date.now()}.png`,
+      name: file.name || `${fallbackPrefix}-${Date.now()}.${getDefaultMediaExtension(kind)}`,
       file,
+      kind,
+      prefix,
       placeholder,
     });
   }
+}
+
+function requiresSavedDocumentForMedia(
+  kind: LocalMediaKind = "image",
+  canUploadImage = false,
+): boolean {
+  if (kind === "image" && canUploadImage && settings.value.uploadUrl.trim()) return false;
+  return isTauriRuntime()
+    && settings.value.imageInsertAction !== "none"
+    && !currentFilePath.value;
+}
+
+async function ensureSavedDocumentForMedia(
+  kind: LocalMediaKind = "image",
+  canUploadImage = false,
+): Promise<boolean> {
+  if (!requiresSavedDocumentForMedia(kind, canUploadImage)) return true;
+  if (!mediaDocumentSaveInFlight) {
+    mediaDocumentSaveInFlight = saveAsFile()
+      .then((saved) => {
+        const ready = saved && Boolean(currentFilePath.value);
+        if (!ready) showToast("文档尚未保存，已取消插入本地媒体", "info");
+        return ready;
+      })
+      .finally(() => {
+        mediaDocumentSaveInFlight = null;
+      });
+  }
+  return mediaDocumentSaveInFlight;
+}
+
+function getDefaultMediaExtension(kind: LocalMediaKind): string {
+  if (kind === "video") return "mp4";
+  if (kind === "audio") return "mp3";
+  return "png";
 }
 
 async function setupNativeFileDrop() {
@@ -2024,9 +2116,10 @@ async function handleNativeWindowClose() {
   }
 }
 
-async function handleDroppedPaths(paths: string[]) {
+async function handleDroppedPaths(drop: NativeFileDrop) {
   dragActive.value = false;
   dragDepth = 0;
+  const { paths, position } = drop;
 
   const folderPath = await findDroppedFolderPath(paths);
   if (folderPath) {
@@ -2045,15 +2138,14 @@ async function handleDroppedPaths(paths: string[]) {
     return;
   }
 
-  const imagePaths = paths.filter(isImagePath);
-  if (imagePaths.length === 0) return;
-  const requests = imagePaths.map((path) => ({
-    path,
-    placeholder: editorRef.value?.reserveImageInsertion() ?? undefined,
-  }));
-  for (const request of requests) {
-    await handleImageFilePath(request.path, request.placeholder);
-  }
+  const media = paths.flatMap((path) => {
+    const kind = getLocalMediaKind(path);
+    return kind ? [{ path, kind }] : [];
+  });
+  if (media.length === 0) return;
+  editorRef.value?.setCursorAtCoordinates(position.x, position.y);
+  if (!await ensureSavedDocumentForMedia()) return;
+  await handleMediaFilePaths(media);
 }
 
 async function findDroppedFolderPath(paths: string[]): Promise<string | null> {
@@ -2093,10 +2185,15 @@ async function handleAppDrop(event: DragEvent) {
     return;
   }
 
-  const imageFiles = files.filter((file) => file.type.startsWith("image/") || isImagePath(file.name));
-  if (imageFiles.length > 0) {
-    await handleImageFiles(imageFiles);
-  }
+  const media = files.flatMap((file) => {
+    const kind = getLocalMediaKind(file.name, file.type);
+    return kind ? [{ file, kind }] : [];
+  });
+  if (media.length === 0) return;
+  editorRef.value?.setCursorAtCoordinates(event.clientX, event.clientY);
+  const saveRequiredBy = media.find(({ kind }) => requiresSavedDocumentForMedia(kind, true));
+  if (saveRequiredBy && !await ensureSavedDocumentForMedia(saveRequiredBy.kind, true)) return;
+  await handleMediaFiles(media.map(({ file }) => file));
 }
 
 async function uploadImageIfConfigured(payload: ImagePayload): Promise<string> {
@@ -2197,21 +2294,30 @@ function patchSettings(patch: Partial<EditorSettings>) {
 
 function startSidebarResize(event: PointerEvent) {
   event.preventDefault();
+  cleanupSidebarResize();
   const startX = event.clientX;
   const startWidth = sidebarWidth.value;
 
   const handleMove = (moveEvent: PointerEvent) => {
     sidebarWidth.value = clampSidebarWidth(startWidth + moveEvent.clientX - startX);
   };
-  const handleUp = () => {
+  const cleanup = () => {
     window.removeEventListener("pointermove", handleMove);
-    window.removeEventListener("pointerup", handleUp);
+    window.removeEventListener("pointerup", cleanup);
+    window.removeEventListener("pointercancel", cleanup);
     document.body.classList.remove("is-resizing-sidebar");
+    if (sidebarResizeCleanup === cleanup) sidebarResizeCleanup = null;
   };
 
+  sidebarResizeCleanup = cleanup;
   document.body.classList.add("is-resizing-sidebar");
   window.addEventListener("pointermove", handleMove);
-  window.addEventListener("pointerup", handleUp, { once: true });
+  window.addEventListener("pointerup", cleanup, { once: true });
+  window.addEventListener("pointercancel", cleanup, { once: true });
+}
+
+function cleanupSidebarResize() {
+  sidebarResizeCleanup?.();
 }
 
 function openQuickOpen() {
@@ -2521,10 +2627,13 @@ async function replaceEveryMatch() {
 
 function getDragHint(dataTransfer: DataTransfer | null): string {
   const files = Array.from(dataTransfer?.items ?? []);
-  if (files.some((item) => item.kind === "file" && item.type.startsWith("image/"))) {
-    return "松开后插入图片";
+  if (files.some((item) => (
+    item.kind === "file"
+    && /^(?:image|video|audio)\//.test(item.type)
+  ))) {
+    return "松开后插入媒体";
   }
-  return "松开后打开 Markdown 文件或插入图片";
+  return "松开后打开 Markdown 文件或插入媒体";
 }
 
 function isMarkdownFile(file: File): boolean {
@@ -2533,10 +2642,6 @@ function isMarkdownFile(file: File): boolean {
 
 function isMarkdownPath(path: string): boolean {
   return isMarkdownPathLike(path);
-}
-
-function isImagePath(path: string): boolean {
-  return /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(path);
 }
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -2993,9 +3098,10 @@ function formatError(error: unknown): string {
 }
 
 .workspace {
+  --sidebar-layout-width: var(--sidebar-width, 260px);
   display: grid;
   grid-row: 3;
-  grid-template-columns: var(--sidebar-width, 260px) 1px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-layout-width) 1px minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -3011,7 +3117,7 @@ function formatError(error: unknown): string {
   position: relative;
   width: 1px;
   min-width: 1px;
-  background: var(--border);
+  background: var(--sidebar-divider);
   cursor: col-resize;
 }
 
@@ -3598,6 +3704,10 @@ function formatError(error: unknown): string {
 }
 
 @media (max-width: 900px) {
+  .workspace {
+    --sidebar-layout-width: min(var(--sidebar-width, 260px), 72vw);
+  }
+
   .status-bar {
     grid-template-columns: auto minmax(0, 1fr) auto;
   }

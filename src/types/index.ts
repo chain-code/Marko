@@ -79,9 +79,15 @@ export type LineEnding = "auto" | "lf" | "crlf";
 
 export type EmojiAutocompleteMode = "automatic" | "escape" | "off";
 
+export type DefaultCodeLanguageApplyTo = "markdown" | "menu" | "both";
+
 export type ImageInsertAction = "none" | "current" | "assets" | "documentAssets";
 
+export type LocalMediaKind = "image" | "video" | "audio";
+
 export type ExportFormat = "pdf" | "html" | "docx" | "rtf" | "epub";
+
+export type MathAutoNumbering = false | "ams" | "all";
 
 export type SidebarTab = "files" | "outline" | "search";
 
@@ -92,11 +98,15 @@ export interface MarkdownExtensionSettings {
   toc: boolean;
   mermaid: boolean;
   flowchart: boolean;
+  sequence: boolean;
   math: boolean;
   footnote: boolean;
   alerts: boolean;
   emoji: boolean;
   marks: boolean;
+  highlight: boolean;
+  superscript: boolean;
+  subscript: boolean;
   autoLinks: boolean;
 }
 
@@ -123,14 +133,20 @@ export interface EditorSettings {
   typewriterMode: boolean;
   typewriterCenter: boolean;
   indentSize: number;
+  codeIndentSize: number;
+  shiftTabAutoIndent: boolean;
   autoPair: boolean;
   emojiAutocomplete: EmojiAutocompleteMode;
   copyMarkdownAsPlainText: boolean;
   preserveSingleLineBreaks: boolean;
   smartPunctuation: boolean;
+  smartQuotes: boolean;
+  smartDashes: boolean;
+  autoNumberingForMath: MathAutoNumbering;
   codeLineNumbers: boolean;
   codeWrap: boolean;
   defaultCodeLanguage: string;
+  defaultCodeLanguageApplyTo: DefaultCodeLanguageApplyTo;
   imageInsertAction: ImageInsertAction;
   escapeImageUrls: boolean;
   addDotSlashToRelativeImagePath: boolean;
@@ -147,7 +163,13 @@ export interface ImagePayload {
 export type ImageInsertRequest = (
   | ImagePayload
   | { name: string; file: File }
-) & { placeholder?: string };
+) & { placeholder?: string; kind?: LocalMediaKind; prefix?: string };
+
+export interface MarkoMarkdownBodyHandle {
+  replaceImagePlaceholder: (placeholder: string, source: string | null, alt?: string) => boolean;
+  focus: () => void;
+  refreshLayout: () => void;
+}
 
 export type EditorCommand =
   | "undo"
@@ -236,4 +258,5 @@ export type EditorCommand =
   | "callout"
   | "mermaid"
   | "flowchart"
+  | "sequence"
   | "setImageWidth";

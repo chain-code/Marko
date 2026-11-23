@@ -6,6 +6,17 @@
   "description": "Markdown desktop editor powered by Vue and Tauri",
   "author": "chain-code",
   "license": "MIT",
+  "types": "./dist-lib/library.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist-lib/library.d.ts",
+      "import": "./dist-lib/marko-editor.js"
+    },
+    "./style.css": "./dist-lib/marko-editor.css"
+  },
+  "files": [
+    "dist-lib"
+  ],
   "scripts": {
     "dev": "vite",
     "test": "npm run test:logic && npm run test:types && npm run test:components",
@@ -14,6 +25,8 @@
     "test:components": "vitest run",
     "verify": "npm test && cargo test --manifest-path src-tauri/Cargo.toml && npm run build",
     "build": "vue-tsc --noEmit && vite build",
+    "build:lib": "vite build --config vite.library.config.ts && vue-tsc --declaration --emitDeclarationOnly -p tsconfig.library.json",
+    "prepare": "npm run build:lib",
     "preview": "vite preview",
     "tauri:dev": "node scripts/run-tauri.mjs dev",
     "tauri:build": "node scripts/run-tauri.mjs build",
@@ -23,27 +36,34 @@
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",
     "@codemirror/language-data": "^6.5.2",
+    "@hackmd/js-sequence-diagrams": "^0.0.1-alpha.3",
+    "@mathjax/src": "^4.0.0",
     "@tauri-apps/api": "^2.0.0",
     "codemirror": "^6.0.2",
+    "dompurify": "^3.4.5",
     "flowchart.js": "^1.18.0",
     "highlight.js": "^11.11.1",
-    "katex": "^0.16.47",
+    "jquery": "^3.7.1",
     "lucide-vue-next": "^0.468.0",
     "markdown-it": "^14.1.0",
     "markdown-it-anchor": "^9.2.0",
+    "markdown-it-emoji": "^3.0.0",
     "markdown-it-footnote": "^4.0.0",
     "markdown-it-mark": "^4.0.0",
     "markdown-it-sub": "^2.0.0",
     "markdown-it-sup": "^2.0.0",
     "markdown-it-task-lists": "^2.1.1",
     "mermaid": "^11.4.1",
+    "raphael": "^2.3.0",
     "vue": "^3.5.13"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
     "@tsconfig/node22": "^22.0.0",
+    "@types/jquery": "^3.5.32",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.10.5",
+    "@types/raphael": "^2.3.9",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vue/test-utils": "^2.4.11",
     "@vue/tsconfig": "^0.7.0",

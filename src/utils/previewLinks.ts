@@ -62,6 +62,12 @@ export function resolveLocalMarkdownHref(
   return normalizeLocalPath(`${baseDir}/${decoded}`);
 }
 
+export function getPreviewHrefAnchor(rawHref: string | null | undefined): string {
+  const href = rawHref?.trim() ?? "";
+  const hashIndex = href.indexOf("#");
+  return hashIndex >= 0 && hashIndex < href.length - 1 ? href.slice(hashIndex) : "";
+}
+
 function stripHrefMetadata(href: string): string {
   const hashIndex = href.indexOf("#");
   const queryIndex = href.indexOf("?");

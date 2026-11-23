@@ -17,7 +17,7 @@ execFileSync(
 writeFileSync(join(outDir, "package.json"), JSON.stringify({ type: "commonjs" }), "utf8");
 
 const testFiles = collectTestFiles(join(outDir, "tests"));
-execFileSync(process.execPath, ["--test", ...testFiles], { stdio: "inherit" });
+execFileSync(process.execPath, ["--experimental-require-module", "--test", ...testFiles], { stdio: "inherit" });
 
 function collectTestFiles(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {

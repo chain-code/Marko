@@ -2,6 +2,11 @@ import type { DocumentStats, SelectionStats } from "@/types";
 import { splitMarkdownBlocks } from "./editorBlocks";
 import { replaceMarkdownLinkSyntax } from "./markdownLinks";
 import { getPreviewLinkAction } from "./previewLinks";
+import {
+  isDollarMathBlockClosing,
+  readDollarMathBlockOpening,
+} from "./mathSyntax";
+import { getYamlFrontMatterRange } from "./frontMatterSyntax";
 
 export interface CursorPosition {
   line: number;
@@ -134,7 +139,7 @@ function stripMarkdown(markdown: string): string {
   const protectedCode = protectMarkdownCode(normalizeQuotedRawBlocks(stripYamlFrontMatter(markdown)));
   const visibleMarkdown = stripHiddenRawHtml(protectedCode.value);
   const withoutDefinitions = stripDefinitionListMarkers(stripMarkdownDefinitions(visibleMarkdown))
-    .replace(/(^|\n)[ \t]{0,3}\$\$\s*\n?([\s\S]*?)\n?[ \t]{0,3}\$\$(?=\n|$)/g, "$1 $2 ")
+    .replace(/(^|\n)[ \t]{0,3}\$\$[ \t]*(?:\{[^\r\n]+\})?\r?\n([\s\S]*?)(?:\r?\n)?[ \t]{0,3}\$\$[ \t]*(?:\{[^\r\n]+\})?(?=\r?\n|$)/g, "$1 $2 ")
     .replace(/(^|\n)[ \t]{0,3}\\\[\s*\n?([\s\S]*?)\n?[ \t]{0,3}\\\](?=\n|$)/g, "$1 $2 ")
     .replace(/(^|[^\\])\\\(([^\n]+?)\\\)/g, "$1 $2 ")
     .replace(/(^|[^\\$])\$([^\n$]+?)\$(?!\$)/g, "$1 $2 ");
@@ -261,11 +266,11 @@ function getDefinitionListLineContext(line: string): { prefix: string; content: 
 function isDefinitionListTermLine(line: string): boolean {
   if (!line.trim()) return false;
   if (/^(?: {4,}|\t)/.test(line)) return false;
-  return !/^[ \t]{0,3}(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|(?:-{3,}|\*{3,}|_{3,})\s*$|\[[^\]\n]+]:\s*\S|\[\^[^\]\s]+]:|`{3,}|~{3,}|<)/.test(line);
+  return !/^[ \t]{0,3}(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|(?:-{3,}|\+{3,}|\*{3,}|_{3,})\s*$|\[[^\]\n]+]:\s*\S|\[\^[^\]\r\n]*[^\]\s\r\n][^\]\r\n]*]:|`{3,}|~{3,}|<)/.test(line);
 }
 
 function isFootnoteDefinitionLine(line: string): boolean {
-  return /^ {0,3}\[\^[^\]\s]+]:/.test(line);
+  return /^ {0,3}\[\^[^\]\r\n]*[^\]\s\r\n][^\]\r\n]*]:/.test(line);
 }
 
 function isLinkReferenceDefinitionLine(line: string): boolean {
@@ -304,7 +309,8 @@ function isFootnoteParagraphContinuationLine(line: string): boolean {
 }
 
 function isFootnoteInterruptingBlockLine(content: string): boolean {
-  return /^(?:#{1,6}\s|(?:[-*+]|\d+[.)])\s+|>\s?|`{3,}|~{3,}|\$\$\s*$|\\\[\s*$|(?:-{3,}|\*{3,}|_{3,})\s*$|\[\^[^\]\s]+]:|\[[^\]\n]+]:\s*\S|<!--|<\/?[A-Za-z][^>\n]*>)/.test(content);
+  return Boolean(readDollarMathBlockOpening(content))
+    || /^(?:#{1,6}\s|(?:[-*+]|\d+[.)])\s+|>\s?|`{3,}|~{3,}|\\\[\s*$|(?:-{3,}|\+{3,}|\*{3,}|_{3,})\s*$|\[\^[^\]\r\n]*[^\]\s\r\n][^\]\r\n]*]:|\[[^\]\n]+]:\s*\S|<!--|<\/?[A-Za-z][^>\n]*>)/.test(content);
 }
 
 function isRenderedAutolink(href: string): boolean {
@@ -384,7 +390,7 @@ function getQuotedRawBlockOpening(line: string): RawBlockOpening | null {
     return { kind: "code", marker: code[1], quotePrefix: quote.normalized, content };
   }
 
-  if (/^\s*\$\$\s*$/.test(content)) {
+  if (readDollarMathBlockOpening(content)) {
     return { kind: "math", marker: "$$", quotePrefix: quote.normalized, content };
   }
   if (/^\s*\\\[\s*$/.test(content)) {
@@ -402,7 +408,7 @@ function stripMatchingQuotePrefix(line: string, quotePrefix: string): string {
 function isRawBlockClose(content: string, opening: RawBlockOpening): boolean {
   const trimmed = content.trim();
   if (opening.kind === "math") {
-    return opening.marker === "$$" ? trimmed === "$$" : trimmed === "\\]";
+    return opening.marker === "$$" ? isDollarMathBlockClosing(content) : trimmed === "\\]";
   }
 
   const closing = trimmed.match(/^(`{3,}|~{3,})$/);
@@ -410,7 +416,8 @@ function isRawBlockClose(content: string, opening: RawBlockOpening): boolean {
 }
 
 function stripYamlFrontMatter(markdown: string): string {
-  return markdown.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "");
+  const range = getYamlFrontMatterRange(markdown);
+  return range ? markdown.slice(range.end) : markdown;
 }
 
 function protectMarkdownCode(markdown: string): { value: string; segments: string[] } {
@@ -577,7 +584,7 @@ function isMarkdownTableRowContent(content: string): boolean {
 
 function isMarkdownTableSeparatorContent(content: string): boolean {
   const cells = splitMarkdownTableRow(content);
-  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell.trim()));
 }
 
 function splitMarkdownTableRow(line: string): string[] {

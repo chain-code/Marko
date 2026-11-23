@@ -231,6 +231,24 @@ test("calculateDocumentStats only strips yaml front matter at the document start
   assert.equal(withRules.paragraphs, 3);
 });
 
+test("calculateDocumentStats supports YAML explicit end and tagged math fences", () => {
+  const explicit = calculateDocumentStats("---\r\ntitle: Draft\r\n...\r\n\r\nalpha beta");
+  assert.equal(explicit.words, 2);
+  assert.equal(explicit.paragraphs, 1);
+
+  const bare = calculateDocumentStats("$$\nx = 1\n$$\n\nafter");
+  const tagged = calculateDocumentStats("$$ {chapter 1}\nx = 1\n$$ {chapter end}\n\nafter");
+  assert.deepEqual(tagged, bare);
+});
+
+test("calculateDocumentStats strips empty and whitespace-delimited front matter", () => {
+  for (const source of ["---\n...\n\nalpha", "---  \r\n--- \t\r\n\r\nalpha"]) {
+    const stats = calculateDocumentStats(source);
+    assert.equal(stats.chars, 5);
+    assert.equal(stats.paragraphs, 1);
+  }
+});
+
 test("calculateDocumentStats counts fenced code contents without fence markers", () => {
   const stats = calculateDocumentStats([
     "```ts",

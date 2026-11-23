@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import {
   alignMarkdownTable,
   adjustHeadingLevel,
+  applyDefaultCodeLanguageOnFenceKey,
   applyMarkdownSpaceShortcut,
   applyAutoPair,
+  editMarkdownFrontMatterOnEnter,
   clearMarkdownFormatting,
   continueMarkdownBlock,
   continueMarkdownList,
@@ -24,6 +26,7 @@ import {
   getSelectedMarkdownSource,
   getPlainTextFromMarkdownSelection,
   getSelectAllTarget,
+  projectMarkdownSelectionSemantics,
   insertMarkdownCalloutTemplate,
   insertMarkdownDiagramTemplate,
   insertMarkdownFootnoteTemplate,
@@ -37,6 +40,7 @@ import {
   insertMarkdownTableRow,
   insertMarkdownTocTemplate,
   moveMarkdownLines,
+  moveMarkdownBlocks,
   moveMarkdownTableColumn,
   moveMarkdownTableRow,
   navigateMarkdownTableCell,
@@ -56,7 +60,10 @@ import {
   setHeadingLevel,
   setImageWidthInLine,
   setParagraphText,
+  splitMarkdownParagraphOnEnter,
+  splitMarkdownContainerParagraphOnPrimaryEnter,
   splitTableRow,
+  toggleMarkdownInlineStyle,
   toggleMarkdownTaskByOrder,
   toggleTaskAtSelection,
   unwrapMarkdownBlockOnBackspace,
@@ -128,6 +135,118 @@ test("getSelectedMarkdownHtml copies rendered HTML from the selected Markdown li
   assert.doesNotMatch(html, /<h1/);
 });
 
+test("projectMarkdownSelectionSemantics keeps partial inline semantics self-contained", () => {
+  const cases = [
+    {
+      source: "before **bold** after",
+      selected: "bold",
+      markdown: "**bold**",
+    },
+    {
+      source: "before *italic* after",
+      selected: "italic",
+      markdown: "*italic*",
+    },
+    {
+      source: "**outer *inner* tail**",
+      selected: "inner",
+      markdown: "***inner***",
+    },
+    {
+      source: "before `code` after",
+      selected: "code",
+      markdown: "`code`",
+    },
+    {
+      source: "before ==marked== after",
+      selected: "marked",
+      markdown: "==marked==",
+    },
+    {
+      source: "before <u>under</u> after",
+      selected: "under",
+      markdown: "<u>under</u>",
+    },
+    {
+      source: "before [docs](https://example.com) after",
+      selected: "docs",
+      markdown: "[docs](https://example.com)",
+    },
+  ];
+
+  for (const current of cases) {
+    const start = current.source.indexOf(current.selected);
+    assert.deepEqual(
+      projectMarkdownSelectionSemantics(
+        current.source,
+        start,
+        start + current.selected.length,
+      ),
+      {
+        source: current.selected,
+        markdown: current.markdown,
+        plainText: current.selected,
+      },
+    );
+  }
+});
+
+test("projectMarkdownSelectionSemantics resolves partial reference labels and preserves source-mode text", () => {
+  const source = "Read [docs][guide].\n\n[guide]: https://example.com \"Guide\"";
+  const start = source.indexOf("docs");
+  assert.equal(
+    projectMarkdownSelectionSemantics(source, start, start + 4).markdown,
+    "[docs](https://example.com \"Guide\")",
+  );
+  assert.deepEqual(
+    projectMarkdownSelectionSemantics(source, start, start + 4, {
+      preserveInlineSemantics: false,
+    }),
+    {
+      source: "docs",
+      markdown: "docs",
+      plainText: "docs",
+    },
+  );
+});
+
+test("projectMarkdownSelectionSemantics leaves literal block selections unchanged", () => {
+  const source = "~~~text\n==literal== <u>html</u>\n~~~";
+  for (const selected of ["literal", "html"]) {
+    const start = source.indexOf(selected);
+    assert.equal(
+      projectMarkdownSelectionSemantics(source, start, start + selected.length).markdown,
+      selected,
+    );
+  }
+});
+
+test("projectMarkdownSelectionSemantics honors independent inline extension switches", () => {
+  const cases = [
+    { source: "==marked==", selected: "marked", option: "includeHighlight" as const },
+    { source: "^raised^", selected: "raised", option: "includeSuperscript" as const },
+    { source: "H~2~O", selected: "2", option: "includeSubscript" as const },
+  ];
+
+  for (const current of cases) {
+    const start = current.source.indexOf(current.selected);
+    const enabled = projectMarkdownSelectionSemantics(
+      current.source,
+      start,
+      start + current.selected.length,
+      { [current.option]: true },
+    );
+    const disabled = projectMarkdownSelectionSemantics(
+      current.source,
+      start,
+      start + current.selected.length,
+      { [current.option]: false },
+    );
+    assert.notEqual(enabled.markdown, current.selected, current.option);
+    assert.equal(disabled.markdown, current.selected, current.option);
+  }
+});
+
 test("getPlainTextFromMarkdownSelection copies readable text without Markdown syntax", () => {
   const markdown = [
     "# **Title**",
@@ -169,6 +288,70 @@ test("getPlainTextFromMarkdownSelection keeps escaped pipes inside quoted table 
   assert.equal(
     getPlainTextFromMarkdownSelection(markdown),
     "Name | Note\nAda | A|B",
+  );
+});
+
+test("getPlainTextFromMarkdownSelection copies rendered inline semantics across lines", () => {
+  const markdown = [
+    "foo_bar_baz :smile: &copy; \\*literal\\*",
+    "",
+    "==highlight",
+    "across lines==",
+    "",
+    "`code",
+    "across lines`",
+    "",
+    "<u>HTML",
+    "across lines</u>",
+    "",
+    "$$",
+    "x_1 + y_2",
+    "$$",
+    "",
+    "Use[^note].",
+    "",
+    "[^note]: detail",
+  ].join("\n");
+
+  assert.equal(
+    getPlainTextFromMarkdownSelection(markdown),
+    [
+      "foo_bar_baz \u{1F604} © *literal*",
+      "highlight",
+      "across lines",
+      "code across lines",
+      "HTML",
+      "across lines",
+      "x_1 + y_2",
+      "Use[1].",
+      "detail",
+    ].join("\n"),
+  );
+});
+
+test("getPlainTextFromMarkdownSelection keeps fenced code contents literal", () => {
+  const markdown = [
+    "before",
+    "",
+    "```md",
+    "  **literal** :smile: &copy;",
+    "",
+    "    kept",
+    "```",
+    "",
+    "after",
+  ].join("\n");
+
+  assert.equal(
+    getPlainTextFromMarkdownSelection(markdown),
+    [
+      "before",
+      "  **literal** :smile: &copy;",
+      "",
+      "    kept",
+      "",
+      "after",
+    ].join("\n"),
   );
 });
 
@@ -225,6 +408,354 @@ test("wrapMarkdownSelection uses longer code spans for selected backticks like T
   assert.deepEqual(
     wrapMarkdownSelection({ value: "`` `cmd` ``", selectionStart: 3, selectionEnd: 8 }, "`", "`"),
     { value: "`cmd`", selectionStart: 0, selectionEnd: 5 },
+  );
+});
+
+test("toggleMarkdownInlineStyle applies every supported Typora inline style", () => {
+  const styles = [
+    ["**", "**"],
+    ["*", "*"],
+    ["~~", "~~"],
+    ["==", "=="],
+    ["^", "^"],
+    ["~", "~"],
+    ["<u>", "</u>"],
+    ["`", "`"],
+  ] as const;
+
+  for (const [opening, closing] of styles) {
+    const source = "before target after";
+    const start = source.indexOf("target");
+    const result = toggleMarkdownInlineStyle(
+      { value: source, selectionStart: start, selectionEnd: start + "target".length },
+      opening,
+      closing,
+    );
+    const expected = `before ${opening}target${closing} after`;
+    assert.deepEqual(result, {
+      value: expected,
+      selectionStart: expected.indexOf("target"),
+      selectionEnd: expected.indexOf("target") + "target".length,
+    });
+  }
+});
+
+test("toggleMarkdownInlineStyle removes every supported inline style", () => {
+  const styles = [
+    ["**", "**"],
+    ["*", "*"],
+    ["~~", "~~"],
+    ["==", "=="],
+    ["^", "^"],
+    ["~", "~"],
+    ["<u>", "</u>"],
+    ["`", "`"],
+  ] as const;
+
+  for (const [opening, closing] of styles) {
+    const source = `${opening}target${closing}`;
+    assert.deepEqual(
+      toggleMarkdownInlineStyle({
+        value: source,
+        selectionStart: opening.length,
+        selectionEnd: opening.length + "target".length,
+      }, opening, closing),
+      { value: "target", selectionStart: 0, selectionEnd: "target".length },
+    );
+  }
+});
+
+test("toggleMarkdownInlineStyle removes semantic bold and italic aliases", () => {
+  const bold = "A __bold__ word";
+  assert.deepEqual(
+    toggleMarkdownInlineStyle({
+      value: bold,
+      selectionStart: bold.indexOf("bold"),
+      selectionEnd: bold.indexOf("bold") + "bold".length,
+    }, "**", "**"),
+    { value: "A bold word", selectionStart: 2, selectionEnd: 6 },
+  );
+
+  const italic = "A _slanted_ word";
+  assert.deepEqual(
+    toggleMarkdownInlineStyle({
+      value: italic,
+      selectionStart: italic.indexOf("slanted"),
+      selectionEnd: italic.indexOf("slanted") + "slanted".length,
+    }, "*", "*"),
+    { value: "A slanted word", selectionStart: 2, selectionEnd: 9 },
+  );
+});
+
+test("toggleMarkdownInlineStyle removes only the selected part of a formatted range", () => {
+  const source = "**left middle right**";
+  const start = source.indexOf("middle");
+  assert.deepEqual(
+    toggleMarkdownInlineStyle({
+      value: source,
+      selectionStart: start,
+      selectionEnd: start + "middle".length,
+    }, "**", "**"),
+    {
+      value: "**left** middle **right**",
+      selectionStart: "**left** ".length,
+      selectionEnd: "**left** middle".length,
+    },
+  );
+
+  assert.deepEqual(
+    toggleMarkdownInlineStyle({
+      value: source,
+      selectionStart: 0,
+      selectionEnd: source.length,
+    }, "**", "**"),
+    { value: "left middle right", selectionStart: 0, selectionEnd: "left middle right".length },
+  );
+});
+
+test("toggleMarkdownInlineStyle merges partial and separate matching ranges", () => {
+  const partial = "**ready** plain";
+  const partialStart = partial.indexOf("ready");
+  const partialResult = toggleMarkdownInlineStyle({
+    value: partial,
+    selectionStart: partialStart,
+    selectionEnd: partial.length,
+  }, "**", "**");
+  assert.deepEqual(partialResult, {
+    value: "**ready plain**",
+    selectionStart: 2,
+    selectionEnd: "**ready plain".length,
+  });
+
+  const islands = "start **middle** and **last**";
+  const islandsResult = toggleMarkdownInlineStyle({
+    value: islands,
+    selectionStart: 0,
+    selectionEnd: islands.length,
+  }, "**", "**");
+  assert.deepEqual(islandsResult, {
+    value: "**start middle and last**",
+    selectionStart: 2,
+    selectionEnd: "**start middle and last".length,
+  });
+});
+
+test("toggleMarkdownInlineStyle formats paragraphs and headings with separate wrappers", () => {
+  const paragraphs = "first paragraph\n\nsecond paragraph";
+  const result = toggleMarkdownInlineStyle({
+    value: paragraphs,
+    selectionStart: 0,
+    selectionEnd: paragraphs.length,
+  }, "**", "**");
+  assert.deepEqual(result, {
+    value: "**first paragraph**\n\n**second paragraph**",
+    selectionStart: 2,
+    selectionEnd: "**first paragraph**\n\n**second paragraph".length,
+  });
+
+  const heading = "# Title\r\n\r\nBody";
+  const headingResult = toggleMarkdownInlineStyle({
+    value: heading,
+    selectionStart: 0,
+    selectionEnd: heading.length,
+  }, "==", "==");
+  assert.deepEqual(headingResult, {
+    value: "# ==Title==\r\n\r\n==Body==",
+    selectionStart: "# ==".length,
+    selectionEnd: "# ==Title==\r\n\r\n==Body".length,
+  });
+  assertOnlyCrlfLineBreaks(headingResult?.value ?? "");
+});
+
+test("toggleMarkdownInlineStyle formats table cells without wrapping table syntax", () => {
+  const source = "| A | B |\n| --- | --- |\n| x | y |";
+  const result = toggleMarkdownInlineStyle({
+    value: source,
+    selectionStart: 0,
+    selectionEnd: source.length,
+  }, "**", "**");
+
+  assert.deepEqual(result, {
+    value: "| **A** | **B** |\n| --- | --- |\n| **x** | **y** |",
+    selectionStart: "| **".length,
+    selectionEnd: "| **A** | **B** |\n| --- | --- |\n| **x** | **y".length,
+  });
+});
+
+test("toggleMarkdownInlineStyle creates reversible empty typing ranges", () => {
+  const styles = [
+    ["**", "**"],
+    ["*", "*"],
+    ["~~", "~~"],
+    ["==", "=="],
+    ["^", "^"],
+    ["~", "~"],
+    ["<u>", "</u>"],
+    ["`", "`"],
+  ] as const;
+
+  for (const [opening, closing] of styles) {
+    const enabled = toggleMarkdownInlineStyle(
+      { value: "ab", selectionStart: 1, selectionEnd: 1 },
+      opening,
+      closing,
+    );
+    assert.deepEqual(enabled, {
+      value: `a${opening}${closing}b`,
+      selectionStart: 1 + opening.length,
+      selectionEnd: 1 + opening.length,
+    });
+    assert.deepEqual(
+      enabled && toggleMarkdownInlineStyle(enabled, opening, closing),
+      { value: "ab", selectionStart: 1, selectionEnd: 1 },
+    );
+  }
+});
+
+test("toggleMarkdownInlineStyle cuts out and restores an unformatted cursor position", () => {
+  const examples = [
+    { source: "**abcd**", cursor: 4, opening: "**", closing: "**", split: "**ab****cd**", next: 6 },
+    { source: "*abcd*", cursor: 3, opening: "*", closing: "*", split: "*ab**cd*", next: 4 },
+    { source: "~~abcd~~", cursor: 4, opening: "~~", closing: "~~", split: "~~ab~~~~cd~~", next: 6 },
+    { source: "==abcd==", cursor: 4, opening: "==", closing: "==", split: "==ab====cd==", next: 6 },
+    { source: "^abcd^", cursor: 3, opening: "^", closing: "^", split: "^ab^^cd^", next: 4 },
+    { source: "~abcd~", cursor: 3, opening: "~", closing: "~", split: "~ab~~cd~", next: 4 },
+    { source: "<u>abcd</u>", cursor: 5, opening: "<u>", closing: "</u>", split: "<u>ab</u><u>cd</u>", next: 9 },
+    { source: "`abcd`", cursor: 3, opening: "`", closing: "`", split: "`ab``cd`", next: 4 },
+  ] as const;
+
+  for (const example of examples) {
+    const split = toggleMarkdownInlineStyle({
+      value: example.source,
+      selectionStart: example.cursor,
+      selectionEnd: example.cursor,
+    }, example.opening, example.closing);
+    assert.deepEqual(split, {
+      value: example.split,
+      selectionStart: example.next,
+      selectionEnd: example.next,
+    });
+    assert.deepEqual(
+      split && toggleMarkdownInlineStyle(split, example.opening, example.closing),
+      { value: example.source, selectionStart: example.cursor, selectionEnd: example.cursor },
+    );
+  }
+});
+
+test("toggleMarkdownInlineStyle moves across an existing style boundary reversibly", () => {
+  const source = "**bold**";
+  const outside = toggleMarkdownInlineStyle({
+    value: source,
+    selectionStart: 2,
+    selectionEnd: 2,
+  }, "**", "**");
+  assert.deepEqual(outside, { value: source, selectionStart: 0, selectionEnd: 0 });
+  assert.deepEqual(
+    outside && toggleMarkdownInlineStyle(outside, "**", "**"),
+    { value: source, selectionStart: 2, selectionEnd: 2 },
+  );
+});
+
+test("toggleMarkdownInlineStyle chooses a safe code span marker for literal backticks", () => {
+  const source = "a`b";
+  assert.deepEqual(
+    toggleMarkdownInlineStyle({
+      value: source,
+      selectionStart: 0,
+      selectionEnd: source.length,
+    }, "`", "`"),
+    { value: "``a`b``", selectionStart: 2, selectionEnd: 5 },
+  );
+
+  assert.deepEqual(
+    toggleMarkdownInlineStyle({ value: "`", selectionStart: 0, selectionEnd: 1 }, "`", "`"),
+    { value: "`` ` ``", selectionStart: 3, selectionEnd: 4 },
+  );
+  assert.deepEqual(
+    toggleMarkdownInlineStyle({ value: "`` ` ``", selectionStart: 3, selectionEnd: 4 }, "`", "`"),
+    { value: "`", selectionStart: 0, selectionEnd: 1 },
+  );
+});
+
+test("toggleMarkdownInlineStyle never edits through another style marker", () => {
+  const source = "**bold**";
+  assert.equal(
+    toggleMarkdownInlineStyle({ value: source, selectionStart: 1, selectionEnd: 1 }, "*", "*"),
+    null,
+  );
+
+  const identifier = "snake_case";
+  assert.deepEqual(
+    toggleMarkdownInlineStyle({ value: identifier, selectionStart: 0, selectionEnd: identifier.length }, "*", "*"),
+    { value: "*snake_case*", selectionStart: 1, selectionEnd: 11 },
+  );
+
+  const code = "`code`";
+  assert.equal(
+    toggleMarkdownInlineStyle({ value: code, selectionStart: 1, selectionEnd: 5 }, "**", "**"),
+    null,
+  );
+  assert.equal(
+    toggleMarkdownInlineStyle({ value: code, selectionStart: 3, selectionEnd: 3 }, "**", "**"),
+    null,
+  );
+  assert.deepEqual(
+    toggleMarkdownInlineStyle({ value: code, selectionStart: 0, selectionEnd: code.length }, "**", "**"),
+    { value: "**`code`**", selectionStart: 2, selectionEnd: 8 },
+  );
+
+  const bold = "**bold**";
+  const italic = toggleMarkdownInlineStyle({ value: bold, selectionStart: 2, selectionEnd: 6 }, "*", "*");
+  assert.deepEqual(italic, { value: "**_bold_**", selectionStart: 3, selectionEnd: 7 });
+  assert.deepEqual(
+    italic && toggleMarkdownInlineStyle(italic, "*", "*"),
+    { value: bold, selectionStart: 2, selectionEnd: 6 },
+  );
+
+  const strike = "~~text~~";
+  assert.equal(
+    toggleMarkdownInlineStyle({ value: strike, selectionStart: 2, selectionEnd: 6 }, "~", "~"),
+    null,
+  );
+});
+
+test("toggleMarkdownInlineStyle rejects destructive or ambiguous ranges", () => {
+  const nested = "**bold *italic* tail**";
+  const italicStart = nested.indexOf("italic");
+  assert.equal(
+    toggleMarkdownInlineStyle({
+      value: nested,
+      selectionStart: italicStart,
+      selectionEnd: italicStart + "italic".length,
+    }, "**", "**"),
+    null,
+  );
+
+  const unmatched = "**unclosed";
+  assert.equal(
+    toggleMarkdownInlineStyle({ value: unmatched, selectionStart: 0, selectionEnd: unmatched.length }, "**", "**"),
+    null,
+  );
+  const codeBlock = "```md\nplain\n```";
+  assert.equal(
+    toggleMarkdownInlineStyle({ value: codeBlock, selectionStart: 6, selectionEnd: 11 }, "**", "**"),
+    null,
+  );
+  assert.equal(
+    toggleMarkdownInlineStyle({ value: "math", selectionStart: 0, selectionEnd: 4 }, "$", "$"),
+    null,
+  );
+  assert.equal(
+    toggleMarkdownInlineStyle({ value: "two words", selectionStart: 0, selectionEnd: "two words".length }, "^", "^"),
+    null,
+  );
+  assert.deepEqual(
+    toggleMarkdownInlineStyle({
+      value: "two\\ words",
+      selectionStart: 0,
+      selectionEnd: "two\\ words".length,
+    }, "^", "^"),
+    { value: "^two\\ words^", selectionStart: 1, selectionEnd: "^two\\ words".length },
   );
 });
 
@@ -785,6 +1316,62 @@ test("pasteMarkdownContent converts pasted HTML tables into Markdown tables", ()
   });
 });
 
+test("pasteMarkdownContent converts single-column HTML tables through fallback and DOM paths", () => {
+  const globals = globalThis as { DOMParser?: unknown };
+  const previousParser = globals.DOMParser;
+  const html = "<table><tr><th>标题</th></tr><tr><td>内容</td></tr></table>";
+  const expected = "| 标题 |\n| --- |\n| 内容 |";
+
+  try {
+    globals.DOMParser = undefined;
+    const fallbackResult = pasteMarkdownContent(
+      { value: "", selectionStart: 0, selectionEnd: 0 },
+      { html, text: "标题\n内容" },
+    );
+    assert.deepEqual(fallbackResult, {
+      value: expected,
+      selectionStart: expected.length,
+      selectionEnd: expected.length,
+    });
+
+    const createCell = (tagName: string, innerHTML: string) => ({
+      nodeType: 1,
+      tagName,
+      innerHTML,
+      textContent: innerHTML,
+      style: {},
+      getAttribute: () => "",
+    });
+    const rows = [
+      { querySelectorAll: () => [createCell("TH", "标题")] },
+      { querySelectorAll: () => [createCell("TD", "内容")] },
+    ];
+    const table = {
+      nodeType: 1,
+      tagName: "TABLE",
+      childNodes: [],
+      querySelectorAll: () => rows,
+    };
+    globals.DOMParser = class {
+      parseFromString() {
+        return { body: { childNodes: [table] } };
+      }
+    };
+
+    const domResult = pasteMarkdownContent(
+      { value: "", selectionStart: 0, selectionEnd: 0 },
+      { html },
+    );
+    assert.deepEqual(domResult, {
+      value: expected,
+      selectionStart: expected.length,
+      selectionEnd: expected.length,
+    });
+  } finally {
+    globals.DOMParser = previousParser;
+  }
+});
+
 test("pasteMarkdownContent expands rowspan HTML table cells like Typora", () => {
   const result = pasteMarkdownContent(
     { value: "", selectionStart: 0, selectionEnd: 0 },
@@ -938,6 +1525,41 @@ test("pasteMarkdownContent converts rich HTML fragments into Markdown", () => {
     selectionStart: expected.length,
     selectionEnd: expected.length,
   });
+});
+
+test("pasteMarkdownContent keeps inline rich HTML inside the current paragraph", () => {
+  const source = "Before  after";
+  const cursor = "Before ".length;
+  const result = pasteMarkdownContent(
+    { value: source, selectionStart: cursor, selectionEnd: cursor },
+    {
+      html: [
+        "<!--StartFragment-->",
+        "<strong>bold</strong> and <em>italic</em>",
+        "<!--EndFragment-->",
+      ].join(""),
+      text: "bold and italic",
+    },
+  );
+  const expected = "Before **bold** and *italic* after";
+
+  assert.deepEqual(result, {
+    value: expected,
+    selectionStart: "Before **bold** and *italic*".length,
+    selectionEnd: "Before **bold** and *italic*".length,
+  });
+
+  assert.deepEqual(
+    pasteMarkdownContent(
+      { value: "Before old after", selectionStart: 7, selectionEnd: 10 },
+      { html: "<code>x</code>", text: "x" },
+    ),
+    {
+      value: "Before `x` after",
+      selectionStart: "Before `x`".length,
+      selectionEnd: "Before `x`".length,
+    },
+  );
 });
 
 test("pasteMarkdownContent preserves nested inline HTML formatting like Typora", () => {
@@ -2143,6 +2765,37 @@ test("insertMarkdownSoftBreak inserts plain newlines inside raw HTML blocks like
   );
 });
 
+test("insertMarkdownSoftBreak replaces raw block selections with plain line breaks", () => {
+  const fenced = "```ts\nalpha beta\n```";
+  const fencedStart = fenced.indexOf("beta");
+  assert.deepEqual(
+    insertMarkdownSoftBreak({
+      value: fenced,
+      selectionStart: fencedStart,
+      selectionEnd: fencedStart + "beta".length,
+    }),
+    {
+      value: "```ts\nalpha \n\n```",
+      selectionStart: fencedStart + 1,
+      selectionEnd: fencedStart + 1,
+    },
+  );
+
+  const html = "<div>\r\nalpha beta\r\n</div>";
+  const htmlStart = html.indexOf("beta");
+  const result = insertMarkdownSoftBreak({
+    value: html,
+    selectionStart: htmlStart,
+    selectionEnd: htmlStart + "beta".length,
+  });
+  assert.deepEqual(result, {
+    value: "<div>\r\nalpha \r\n\r\n</div>",
+    selectionStart: htmlStart + 2,
+    selectionEnd: htmlStart + 2,
+  });
+  assertOnlyCrlfLineBreaks(result.value);
+});
+
 test("insertMarkdownSoftBreak preserves CRLF line endings like Typora", () => {
   const source = "alpha\r\n- item";
   const result = insertMarkdownSoftBreak({ value: source, selectionStart: source.length, selectionEnd: source.length });
@@ -2186,6 +2839,64 @@ test("formatMarkdownCodeBlock wraps selection or inserts an empty focused block"
   assert.equal(nested.value, "````md\nalpha\n```\nbeta\n````\n");
   assert.equal(nested.selectionStart, "````md\n".length);
   assert.equal(nested.selectionEnd, "````md\nalpha\n```\nbeta".length);
+});
+
+test("applyDefaultCodeLanguageOnFenceKey inserts and selects a Typora-style default language", () => {
+  assert.deepEqual(
+    applyDefaultCodeLanguageOnFenceKey(
+      { value: "``", selectionStart: 2, selectionEnd: 2 },
+      "`",
+      "typescript",
+    ),
+    {
+      value: "```typescript",
+      selectionStart: 3,
+      selectionEnd: 13,
+    },
+  );
+
+  assert.deepEqual(
+    applyDefaultCodeLanguageOnFenceKey(
+      { value: "> ~~\r\nnext", selectionStart: 4, selectionEnd: 4 },
+      "~",
+      "rust",
+    ),
+    {
+      value: "> ~~~rust\r\nnext",
+      selectionStart: 5,
+      selectionEnd: 9,
+    },
+  );
+});
+
+test("applyDefaultCodeLanguageOnFenceKey does not consume an existing third fence marker", () => {
+  const state = { value: "```", selectionStart: 2, selectionEnd: 2 };
+
+  assert.equal(applyDefaultCodeLanguageOnFenceKey(state, "`", "go"), null);
+  assert.equal(
+    `${state.value.slice(0, state.selectionStart)}\`${state.value.slice(state.selectionEnd)}`,
+    "````",
+  );
+});
+
+test("applyDefaultCodeLanguageOnFenceKey ignores empty defaults and closing fences", () => {
+  assert.equal(
+    applyDefaultCodeLanguageOnFenceKey(
+      { value: "``", selectionStart: 2, selectionEnd: 2 },
+      "`",
+      "",
+    ),
+    null,
+  );
+  const closing = "```js\ncode\n``";
+  assert.equal(
+    applyDefaultCodeLanguageOnFenceKey(
+      { value: closing, selectionStart: closing.length, selectionEnd: closing.length },
+      "`",
+      "python",
+    ),
+    null,
+  );
 });
 
 test("formatMarkdownCodeBlock preserves CRLF line endings in generated fences", () => {
@@ -2383,6 +3094,14 @@ test("setHeadingLevel converts Setext headings without leaving underline markers
     setHeadingLevel({ value: ">> Nested\n>> ===", selectionStart: 0, selectionEnd: 0 }, 1),
     { value: "> > # Nested", selectionStart: "> > # ".length, selectionEnd: "> > # Nested".length },
   );
+});
+
+test("setHeadingLevel leaves single-character Setext markers in the paragraph", () => {
+  for (const marker of ["=", "-"]) {
+    const source = "Title\n" + marker + "\nbody";
+    const result = setHeadingLevel({ value: source, selectionStart: 0, selectionEnd: 0 }, 1);
+    assert.equal(result.value, "# Title\n" + marker + "\nbody", marker);
+  }
 });
 
 test("setHeadingLevel preserves CRLF when converting Setext headings", () => {
@@ -2864,6 +3583,121 @@ test("moveMarkdownLines preserves CRLF line endings like Typora", () => {
   assertOnlyCrlfLineBreaks(down.value);
 });
 
+test("moveMarkdownBlocks moves complete rich-text paragraphs and syntax blocks", () => {
+  const source = "First line\ncontinued\n\n## Second\n\nThird";
+  const down = moveMarkdownBlocks({
+    value: source,
+    selectionStart: source.indexOf("continued"),
+    selectionEnd: source.indexOf("continued"),
+  }, "down");
+  assert.equal(down.value, "## Second\n\nFirst line\ncontinued\n\nThird");
+  assert.equal(down.value.slice(down.selectionStart).startsWith("continued"), true);
+
+  const up = moveMarkdownBlocks(down, "up");
+  assert.deepEqual(up, {
+    value: source,
+    selectionStart: source.indexOf("continued"),
+    selectionEnd: source.indexOf("continued"),
+  });
+});
+
+test("moveMarkdownBlocks 在 Front Matter 内按 YAML 行移动并固定分隔栏", () => {
+  const source = "---\r\ntitle: Marko\r\nauthor: chain-code\r\nversion: 1\r\n...\r\nBody";
+  const authorStart = source.indexOf("author");
+  const moved = moveMarkdownBlocks({
+    value: source,
+    selectionStart: authorStart,
+    selectionEnd: authorStart + "author".length,
+  }, "up");
+
+  assert.equal(
+    moved.value,
+    "---\r\nauthor: chain-code\r\ntitle: Marko\r\nversion: 1\r\n...\r\nBody",
+  );
+  assert.equal(moved.value.slice(moved.selectionStart, moved.selectionEnd), "author");
+  assertOnlyCrlfLineBreaks(moved.value);
+
+  const scalarSource = "---\nnotes: |\n  9. nine\n  10. ten\n---\nBody";
+  const scalarCursor = scalarSource.indexOf("10. ten");
+  assert.equal(
+    moveMarkdownBlocks({
+      value: scalarSource,
+      selectionStart: scalarCursor,
+      selectionEnd: scalarCursor,
+    }, "up").value,
+    "---\nnotes: |\n  10. ten\n  9. nine\n---\nBody",
+  );
+
+  for (const boundary of [
+    { cursor: source.indexOf("title"), direction: "up" as const },
+    { cursor: source.indexOf("version"), direction: "down" as const },
+    { cursor: 1, direction: "down" as const },
+    { cursor: source.indexOf("...") + 1, direction: "up" as const },
+    { cursor: source.indexOf("Body"), direction: "up" as const },
+  ]) {
+    assert.deepEqual(
+      moveMarkdownBlocks({
+        value: source,
+        selectionStart: boundary.cursor,
+        selectionEnd: boundary.cursor,
+      }, boundary.direction),
+      {
+        value: source,
+        selectionStart: boundary.cursor,
+        selectionEnd: boundary.cursor,
+      },
+    );
+  }
+});
+
+test("moveMarkdownBlocks 只移动无空行相邻的 ATX 标题", () => {
+  const source = "Before\n# Heading\nAfter";
+  const headingStart = source.indexOf("Heading");
+  const moved = moveMarkdownBlocks({
+    value: source,
+    selectionStart: headingStart,
+    selectionEnd: headingStart,
+  }, "down");
+
+  assert.equal(moved.value, "Before\nAfter\n# Heading");
+  assert.equal(moved.value.slice(moved.selectionStart).startsWith("Heading"), true);
+});
+
+test("moveMarkdownBlocks moves and renumbers sibling list items", () => {
+  const source = "1. one\n2. two\n3. three";
+  const result = moveMarkdownBlocks({
+    value: source,
+    selectionStart: source.indexOf("two"),
+    selectionEnd: source.indexOf("two"),
+  }, "up");
+
+  assert.equal(result.value, "1. two\n2. one\n3. three");
+  assert.equal(result.value.slice(result.selectionStart).startsWith("two"), true);
+});
+
+test("moveMarkdownBlocks climbs out of a list at its boundary", () => {
+  const source = "Before\n\n- one\n- two\n\nAfter";
+  const result = moveMarkdownBlocks({
+    value: source,
+    selectionStart: source.indexOf("one"),
+    selectionEnd: source.indexOf("one"),
+  }, "up");
+
+  assert.equal(result.value, "- one\n- two\n\nBefore\n\nAfter");
+  assert.equal(result.value.slice(result.selectionStart).startsWith("one"), true);
+});
+
+test("moveMarkdownBlocks preserves CRLF block separators", () => {
+  const source = "One\r\n\r\nTwo\r\n\r\nThree";
+  const result = moveMarkdownBlocks({
+    value: source,
+    selectionStart: source.indexOf("Two"),
+    selectionEnd: source.indexOf("Two"),
+  }, "down");
+
+  assert.equal(result.value, "One\r\n\r\nThree\r\n\r\nTwo");
+});
+
 test("moveMarkdownLines renumbers ordered list items like Typora", () => {
   const source = "1. one\n2. two\n3. three";
   assert.equal(
@@ -2880,6 +3714,32 @@ test("moveMarkdownLines renumbers ordered list items like Typora", () => {
     moveMarkdownLines({ value: customStart, selectionStart: customStart.indexOf("ten"), selectionEnd: customStart.indexOf("ten") }, "up").value,
     "9. ten\n10. nine\n11. eleven",
   );
+});
+
+test("list moves preserve selections across ordered marker width changes", () => {
+  const lineSource = "9. nine\n10. ten\n11. eleven";
+  const lineStart = lineSource.indexOf("ten");
+  const movedLine = moveMarkdownLines({
+    value: lineSource,
+    selectionStart: lineStart,
+    selectionEnd: lineStart + "ten".length,
+  }, "up");
+  assert.equal(movedLine.value, "9. ten\n10. nine\n11. eleven");
+  assert.equal(movedLine.value.slice(movedLine.selectionStart, movedLine.selectionEnd), "ten");
+
+  const blockSource = "99. ninety-nine\r\n100. hundred\r\n101. next";
+  const blockStart = blockSource.indexOf("hundred");
+  const movedBlock = moveMarkdownBlocks({
+    value: blockSource,
+    selectionStart: blockStart,
+    selectionEnd: blockStart + "hundred".length,
+  }, "up");
+  assert.equal(movedBlock.value, "99. hundred\r\n100. ninety-nine\r\n101. next");
+  assert.equal(
+    movedBlock.value.slice(movedBlock.selectionStart, movedBlock.selectionEnd),
+    "hundred",
+  );
+  assertOnlyCrlfLineBreaks(movedBlock.value);
 });
 
 test("moveMarkdownLines does not renumber four-space ordered code outside lists like Typora", () => {
@@ -2907,6 +3767,127 @@ test("continueMarkdownList continues bullet, ordered, and task list markers", ()
   assert.deepEqual(
     continueMarkdownList({ value: "- [x] done", selectionStart: 10, selectionEnd: 10 }),
     { value: "- [x] done\n- [ ] ", selectionStart: 17, selectionEnd: 17 },
+  );
+});
+
+test("ordered list commands support arbitrary-length marker digits", () => {
+  const nineDigitItem = "123456789. item";
+  const continued = {
+    value: "123456789. item\n123456790. ",
+    selectionStart: "123456789. item\n123456790. ".length,
+    selectionEnd: "123456789. item\n123456790. ".length,
+  };
+  assert.deepEqual(
+    continueMarkdownList({ value: nineDigitItem, selectionStart: nineDigitItem.length, selectionEnd: nineDigitItem.length }),
+    continued,
+  );
+  assert.deepEqual(
+    continueMarkdownBlock({ value: nineDigitItem, selectionStart: nineDigitItem.length, selectionEnd: nineDigitItem.length }),
+    continued,
+  );
+
+  const tenDigitItem = "1234567890. item";
+  const tenDigitContinued = {
+    value: "1234567890. item\n1234567891. ",
+    selectionStart: "1234567890. item\n1234567891. ".length,
+    selectionEnd: "1234567890. item\n1234567891. ".length,
+  };
+  assert.deepEqual(
+    continueMarkdownList({ value: tenDigitItem, selectionStart: tenDigitItem.length, selectionEnd: tenDigitItem.length }),
+    tenDigitContinued,
+  );
+  assert.deepEqual(
+    continueMarkdownBlock({ value: tenDigitItem, selectionStart: tenDigitItem.length, selectionEnd: tenDigitItem.length }),
+    tenDigitContinued,
+  );
+
+  const nineDigitMarker = "123456789.";
+  assert.deepEqual(
+    applyMarkdownSpaceShortcut({ value: nineDigitMarker, selectionStart: nineDigitMarker.length, selectionEnd: nineDigitMarker.length }),
+    { value: `${nineDigitMarker} `, selectionStart: nineDigitMarker.length + 1, selectionEnd: nineDigitMarker.length + 1 },
+  );
+  const tenDigitMarker = "1234567890.";
+  assert.deepEqual(
+    applyMarkdownSpaceShortcut({ value: tenDigitMarker, selectionStart: tenDigitMarker.length, selectionEnd: tenDigitMarker.length }),
+    { value: tenDigitMarker + " ", selectionStart: tenDigitMarker.length + 1, selectionEnd: tenDigitMarker.length + 1 },
+  );
+
+  const nestedNineDigit = "  123456789. child";
+  assert.deepEqual(
+    outdentMarkdownListOnBackspace({
+      value: nestedNineDigit,
+      selectionStart: "  123456789. ".length,
+      selectionEnd: "  123456789. ".length,
+    }),
+    { value: "123456789. child", selectionStart: "123456789. ".length, selectionEnd: "123456789. ".length },
+  );
+  const nestedTenDigit = "  1234567890. child";
+  assert.deepEqual(
+    outdentMarkdownListOnBackspace({
+      value: nestedTenDigit,
+      selectionStart: "  1234567890. ".length,
+      selectionEnd: "  1234567890. ".length,
+    }),
+    { value: "1234567890. child", selectionStart: "1234567890. ".length, selectionEnd: "1234567890. ".length },
+  );
+
+  assert.deepEqual(
+    insertMarkdownSoftBreak({ value: nineDigitItem, selectionStart: nineDigitItem.length, selectionEnd: nineDigitItem.length }),
+    {
+      value: `${nineDigitItem}  \n${" ".repeat(11)}`,
+      selectionStart: `${nineDigitItem}  \n${" ".repeat(11)}`.length,
+      selectionEnd: `${nineDigitItem}  \n${" ".repeat(11)}`.length,
+    },
+  );
+  assert.deepEqual(
+    insertMarkdownSoftBreak({ value: tenDigitItem, selectionStart: tenDigitItem.length, selectionEnd: tenDigitItem.length }),
+    {
+      value: `${tenDigitItem}  \n${" ".repeat(12)}`,
+      selectionStart: `${tenDigitItem}  \n${" ".repeat(12)}`.length,
+      selectionEnd: `${tenDigitItem}  \n${" ".repeat(12)}`.length,
+    },
+  );
+
+  const carryItem = "999999999999999999999999999999. item";
+  assert.equal(
+    continueMarkdownList({ value: carryItem, selectionStart: carryItem.length, selectionEnd: carryItem.length })?.value,
+    "999999999999999999999999999999. item\n1000000000000000000000000000000. ",
+  );
+});
+
+test("task conversion and formatting recognize ten-digit ordered prefixes", () => {
+  const nineDigitItem = "123456789. item";
+  assert.equal(
+    toggleTaskAtSelection({ value: nineDigitItem, selectionStart: nineDigitItem.length, selectionEnd: nineDigitItem.length }).value,
+    "123456789. [ ] item",
+  );
+
+  const tenDigitItem = "1234567890. item";
+  assert.equal(
+    toggleTaskAtSelection({ value: tenDigitItem, selectionStart: tenDigitItem.length, selectionEnd: tenDigitItem.length }).value,
+    "1234567890. [ ] item",
+  );
+
+  const nineDigitTasks = "123456789. [x] done\nplain";
+  assert.equal(
+    formatMarkdownLines({ value: nineDigitTasks, selectionStart: 0, selectionEnd: nineDigitTasks.length }, "task").value,
+    "- [x] done\n- [ ] plain",
+  );
+  const tenDigitTasks = "1234567890. [x] done\nplain";
+  assert.equal(
+    formatMarkdownLines({ value: tenDigitTasks, selectionStart: 0, selectionEnd: tenDigitTasks.length }, "task").value,
+    "- [x] done\n- [ ] plain",
+  );
+
+  const nineDigitFormatted = "123456789. **item**";
+  assert.equal(
+    clearMarkdownFormatting({ value: nineDigitFormatted, selectionStart: 0, selectionEnd: nineDigitFormatted.length }).value,
+    "item",
+  );
+  const tenDigitFormatted = "1234567890. **item**";
+  assert.equal(
+    clearMarkdownFormatting({ value: tenDigitFormatted, selectionStart: 0, selectionEnd: tenDigitFormatted.length }).value,
+    "item",
   );
 });
 
@@ -2969,24 +3950,119 @@ test("continueMarkdownList removes an empty list marker", () => {
   assert.deepEqual(result, { value: "", selectionStart: 0, selectionEnd: 0 });
 });
 
-test("continueMarkdownList outdents empty nested items like Typora", () => {
+test("continueMarkdownList 保留 Typora 紧凑星号嵌套并续写最内层", () => {
+  const second = "* one\n* * two";
+  const secondContinued = second + "\n  * ";
+  assert.deepEqual(
+    continueMarkdownList({ value: second, selectionStart: second.length, selectionEnd: second.length }),
+    {
+      value: secondContinued,
+      selectionStart: secondContinued.length,
+      selectionEnd: secondContinued.length,
+    },
+  );
+
+  const third = second + "\n  * * three";
+  const thirdContinued = third + "\n    * ";
+  assert.deepEqual(
+    continueMarkdownList({ value: third, selectionStart: third.length, selectionEnd: third.length }),
+    {
+      value: thirdContinued,
+      selectionStart: thirdContinued.length,
+      selectionEnd: thirdContinued.length,
+    },
+  );
+});
+
+test("continueMarkdownList 的空二三级项一次退出并保留当前缩进", () => {
+  const second = "* one\n* * ";
+  assert.deepEqual(
+    continueMarkdownList({ value: second, selectionStart: second.length, selectionEnd: second.length }),
+    {
+      value: "* one\n  ",
+      selectionStart: "* one\n  ".length,
+      selectionEnd: "* one\n  ".length,
+    },
+  );
+
+  const third = "* one\n* * two\n  * * ";
+  assert.deepEqual(
+    continueMarkdownList({ value: third, selectionStart: third.length, selectionEnd: third.length }),
+    {
+      value: "* one\n* * two\n    ",
+      selectionStart: "* one\n* * two\n    ".length,
+      selectionEnd: "* one\n* * two\n    ".length,
+    },
+  );
+});
+
+test("continueMarkdownList 删除空嵌套标记并保留 Typora 缩进", () => {
   assert.deepEqual(
     continueMarkdownList({ value: "  - ", selectionStart: "  - ".length, selectionEnd: "  - ".length }),
-    { value: "- ", selectionStart: "- ".length, selectionEnd: "- ".length },
+    { value: "  ", selectionStart: 2, selectionEnd: 2 },
   );
   assert.deepEqual(
     continueMarkdownList({ value: "- parent\n\t- [x] ", selectionStart: "- parent\n\t- [x] ".length, selectionEnd: "- parent\n\t- [x] ".length }),
-    { value: "- parent\n- [ ] ", selectionStart: "- parent\n- [ ] ".length, selectionEnd: "- parent\n- [ ] ".length },
+    { value: "- parent\n\t", selectionStart: "- parent\n\t".length, selectionEnd: "- parent\n\t".length },
   );
   assert.deepEqual(
     continueMarkdownList({ value: "1. parent\n    3. ", selectionStart: "1. parent\n    3. ".length, selectionEnd: "1. parent\n    3. ".length }),
-    { value: "1. parent\n  1. ", selectionStart: "1. parent\n  1. ".length, selectionEnd: "1. parent\n  1. ".length },
+    { value: "1. parent\n    ", selectionStart: "1. parent\n    ".length, selectionEnd: "1. parent\n    ".length },
   );
 
   const ordered = "9. nine\n  1. \n10. ten";
   assert.deepEqual(
     continueMarkdownList({ value: ordered, selectionStart: "9. nine\n  1. ".length, selectionEnd: "9. nine\n  1. ".length }),
-    { value: "9. nine\n10. \n11. ten", selectionStart: "9. nine\n10. ".length, selectionEnd: "9. nine\n10. ".length },
+    { value: "9. nine\n  \n10. ten", selectionStart: "9. nine\n  ".length, selectionEnd: "9. nine\n  ".length },
+  );
+});
+test("list Enter and Backspace honor two- and four-space indentation settings", () => {
+  const empty = "- parent\n    - ";
+  assert.equal(
+    continueMarkdownList({ value: empty, selectionStart: empty.length, selectionEnd: empty.length }, 2)?.value,
+    "- parent\n    ",
+  );
+  assert.equal(
+    continueMarkdownList({ value: empty, selectionStart: empty.length, selectionEnd: empty.length }, 4)?.value,
+    "- parent\n    ",
+  );
+
+  const quotedEmpty = "> - parent\n>     - ";
+  assert.equal(
+    continueMarkdownBlock({
+      value: quotedEmpty,
+      selectionStart: quotedEmpty.length,
+      selectionEnd: quotedEmpty.length,
+    }, 4)?.value,
+    "> - parent\n>     ",
+  );
+
+  const nested = "- parent\n    - child";
+  assert.equal(
+    outdentMarkdownListOnBackspace({
+      value: nested,
+      selectionStart: "- parent\n    - ".length,
+      selectionEnd: "- parent\n    - ".length,
+    }, 2)?.value,
+    "- parent\n  - child",
+  );
+  assert.equal(
+    outdentMarkdownListOnBackspace({
+      value: nested,
+      selectionStart: "- parent\n    - ".length,
+      selectionEnd: "- parent\n    - ".length,
+    }, 4)?.value,
+    "- parent\n- child",
+  );
+
+  const quotedNested = "> - parent\n>     - child";
+  assert.equal(
+    outdentMarkdownListOnBackspace({
+      value: quotedNested,
+      selectionStart: "> - parent\n>     - ".length,
+      selectionEnd: "> - parent\n>     - ".length,
+    }, 4)?.value,
+    "> - parent\n> - child",
   );
 });
 
@@ -3134,6 +4210,70 @@ test("continueMarkdownList keeps nested children while renumbering after exiting
   });
 });
 
+test("continueMarkdownBlock deletes same-item selections before continuing lists and quotes", () => {
+  const continueSelection = (source: string) => {
+    const selectionStart = source.indexOf("SELECT");
+    return continueMarkdownBlock({
+      value: source,
+      selectionStart,
+      selectionEnd: selectionStart + "SELECT ".length,
+    });
+  };
+  const continueAcrossItems = (source: string) => {
+    const selectionStart = source.indexOf("SELECT");
+    const selectionEnd = source.indexOf("REMOVE") + "REMOVE ".length;
+    return continueMarkdownBlock({ value: source, selectionStart, selectionEnd });
+  };
+
+  assert.equal(continueSelection("- before SELECT after")?.value, "- before \n- after");
+  assert.equal(continueSelection("> before SELECT after")?.value, "> before \n> after");
+  assert.equal(continueSelection("> - before SELECT after")?.value, "> - before \n> - after");
+  assert.equal(continueSelection("- [x] before SELECT after")?.value, "- [x] before \n- [ ] after");
+  assert.equal(
+    continueSelection("3. before SELECT after\n4. tail")?.value,
+    "3. before \n4. after\n5. tail",
+  );
+
+  assert.equal(
+    continueAcrossItems("- first SELECT\n- REMOVE second\n- tail")?.value,
+    "- first \n- second\n- tail",
+  );
+  assert.equal(
+    continueAcrossItems("3. first SELECT\n4. REMOVE second\n5. tail")?.value,
+    "3. first \n4. second\n5. tail",
+  );
+  assert.equal(
+    continueAcrossItems("> - [x] first SELECT\n> - [ ] REMOVE second")?.value,
+    "> - [x] first \n> - [ ] second",
+  );
+
+  const multiLine = "- first\n\n- second";
+  assert.deepEqual(continueMarkdownBlock({
+    value: multiLine,
+    selectionStart: multiLine.indexOf("first"),
+    selectionEnd: multiLine.indexOf("second") + "second".length,
+  }), {
+    value: "",
+    selectionStart: 0,
+    selectionEnd: 0,
+  });
+
+  const independentBlocks = "- first\n\nparagraph\n\n- second";
+  assert.equal(continueMarkdownBlock({
+    value: independentBlocks,
+    selectionStart: independentBlocks.indexOf("first"),
+    selectionEnd: independentBlocks.indexOf("second") + "second".length,
+  }), null);
+
+  const fenced = "```md\n- before SELECT after\n```";
+  const fencedStart = fenced.indexOf("SELECT");
+  assert.equal(continueMarkdownBlock({
+    value: fenced,
+    selectionStart: fencedStart,
+    selectionEnd: fencedStart + "SELECT ".length,
+  }), null);
+});
+
 test("continueMarkdownBlock continues and exits blockquotes", () => {
   assert.deepEqual(
     continueMarkdownBlock({ value: "> quote", selectionStart: 7, selectionEnd: 7 }),
@@ -3189,7 +4329,7 @@ test("continueMarkdownBlock exits empty quoted list items and renumbers ordered 
   const nestedCursor = "> 9. nine\n>   1. ".length;
   assert.deepEqual(
     continueMarkdownBlock({ value: nested, selectionStart: nestedCursor, selectionEnd: nestedCursor }),
-    { value: "> 9. nine\n> 10. \n> 11. ten", selectionStart: "> 9. nine\n> 10. ".length, selectionEnd: "> 9. nine\n> 10. ".length },
+    { value: "> 9. nine\n>   \n> 10. ten", selectionStart: "> 9. nine\n>   ".length, selectionEnd: "> 9. nine\n>   ".length },
   );
 });
 
@@ -3359,6 +4499,16 @@ test("continueMarkdownBlock continues footnote definitions like Typora", () => {
   assert.deepEqual(
     continueMarkdownBlock({ value: "[^1]:", selectionStart: "[^1]:".length, selectionEnd: "[^1]:".length }),
     { value: "[^1]:\n    ", selectionStart: "[^1]:\n    ".length, selectionEnd: "[^1]:\n    ".length },
+  );
+
+  const spaced = "[^中文 note]: detail";
+  assert.deepEqual(
+    continueMarkdownBlock({ value: spaced, selectionStart: spaced.length, selectionEnd: spaced.length }),
+    {
+      value: "[^中文 note]: detail\n    ",
+      selectionStart: "[^中文 note]: detail\n    ".length,
+      selectionEnd: "[^中文 note]: detail\n    ".length,
+    },
   );
 });
 
@@ -3568,11 +4718,370 @@ test("continueMarkdownBlock does not apply markdown block rules inside raw HTML 
     null,
   );
 
+  assert.equal(
+    continueMarkdownBlock({ value: "<div>\n> literal\n* item", selectionStart: "<div>\n> literal\n* item".length, selectionEnd: "<div>\n> literal\n* item".length }),
+    null,
+  );
+  assert.equal(
+    continueMarkdownBlock({ value: "> <div>\r\n> > literal\r\n> * item", selectionStart: "> <div>\r\n> > literal\r\n> * item".length, selectionEnd: "> <div>\r\n> > literal\r\n> * item".length }),
+    null,
+  );
   const script = "<script>\n- hidden\n</script>\n- item";
   assert.deepEqual(
     continueMarkdownBlock({ value: script, selectionStart: script.length, selectionEnd: script.length }),
     { value: "<script>\n- hidden\n</script>\n- item\n- ", selectionStart: script.length + 3, selectionEnd: script.length + 3 },
   );
+});
+
+test("splitMarkdownParagraphOnEnter creates Typora-style paragraphs and preserves line endings", () => {
+  assert.deepEqual(
+    splitMarkdownParagraphOnEnter({ value: "alpha beta", selectionStart: 5, selectionEnd: 5 }),
+    { value: "alpha\n\n beta", selectionStart: 7, selectionEnd: 7 },
+  );
+  assert.deepEqual(
+    splitMarkdownParagraphOnEnter({ value: "alpha\r\nbeta", selectionStart: "alpha\r\nbe".length, selectionEnd: "alpha\r\nbe".length }),
+    {
+      value: "alpha\r\nbe\r\n\r\nta",
+      selectionStart: "alpha\r\nbe\r\n\r\n".length,
+      selectionEnd: "alpha\r\nbe\r\n\r\n".length,
+    },
+  );
+  assert.equal(
+    splitMarkdownParagraphOnEnter({ value: "```\ncode\n```", selectionStart: 6, selectionEnd: 6 }),
+    null,
+  );
+});
+
+test("splitMarkdownParagraphOnEnter keeps a heading intact when Enter is pressed before its text", () => {
+  const source = "before\n\n# Title";
+  const titleStart = source.indexOf("Title");
+  assert.deepEqual(
+    splitMarkdownParagraphOnEnter({ value: source, selectionStart: titleStart, selectionEnd: titleStart }),
+    {
+      value: "before\n\n\n\n# Title",
+      selectionStart: source.indexOf("#"),
+      selectionEnd: source.indexOf("#"),
+    },
+  );
+
+  const middle = "# Title";
+  assert.deepEqual(
+    splitMarkdownParagraphOnEnter({ value: middle, selectionStart: 4, selectionEnd: 4 }),
+    { value: "# Ti\n\n# tle", selectionStart: 8, selectionEnd: 8 },
+  );
+  assert.deepEqual(
+    splitMarkdownParagraphOnEnter({ value: middle, selectionStart: middle.length, selectionEnd: middle.length }),
+    { value: "# Title\n\n", selectionStart: 9, selectionEnd: 9 },
+  );
+});
+
+test("editMarkdownFrontMatterOnEnter inserts literal line breaks and exits from the trailing empty line", () => {
+  const source = "---\ntitle: x\n\n---\nBody";
+  const logicalEnd = source.indexOf("\n\n") + 1;
+  assert.deepEqual(
+    editMarkdownFrontMatterOnEnter({
+      value: source,
+      selectionStart: logicalEnd,
+      selectionEnd: logicalEnd,
+    }),
+    {
+      value: "---\ntitle: x\n\n---\n\nBody",
+      selectionStart: "---\ntitle: x\n\n---\n".length,
+      selectionEnd: "---\ntitle: x\n\n---\n".length,
+    },
+  );
+
+  const endSource = "---\ntitle: x\n\n---";
+  const endLogicalEnd = endSource.indexOf("\n\n") + 1;
+  assert.deepEqual(
+    editMarkdownFrontMatterOnEnter({
+      value: endSource,
+      selectionStart: endLogicalEnd,
+      selectionEnd: endLogicalEnd,
+    }),
+    {
+      value: endSource + "\n",
+      selectionStart: endSource.length + 1,
+      selectionEnd: endSource.length + 1,
+    },
+  );
+
+  for (const modifiers of [{ primary: true }, { shift: true }, { alt: true }]) {
+    const result = editMarkdownFrontMatterOnEnter({
+      value: endSource,
+      selectionStart: endLogicalEnd,
+      selectionEnd: endLogicalEnd,
+    }, modifiers);
+    assert.deepEqual(result, {
+      value: "---\ntitle: x\n\n\n---",
+      selectionStart: endLogicalEnd + 1,
+      selectionEnd: endLogicalEnd + 1,
+    });
+  }
+});
+
+test("editMarkdownFrontMatterOnEnter deletes selections first and preserves CRLF", () => {
+  const source = "---\r\ntitle: remove\r\n\r\n---";
+  const selectionStart = source.indexOf("remove");
+  const selectionEnd = selectionStart + "remove".length;
+  const selected = editMarkdownFrontMatterOnEnter({
+    value: source,
+    selectionStart,
+    selectionEnd,
+  });
+  assert.deepEqual(selected, {
+    value: "---\r\ntitle: \r\n\r\n\r\n---",
+    selectionStart: selectionStart + 2,
+    selectionEnd: selectionStart + 2,
+  });
+  assertOnlyCrlfLineBreaks(selected?.value ?? "");
+
+  const exitSource = "---\r\ntitle: x\r\n\r\n---\r\nBody";
+  const logicalEnd = exitSource.indexOf("\r\n\r\n") + 2;
+  const exited = editMarkdownFrontMatterOnEnter({
+    value: exitSource,
+    selectionStart: logicalEnd,
+    selectionEnd: logicalEnd,
+  });
+  assert.equal(exited?.value, "---\r\ntitle: x\r\n\r\n---\r\n\r\nBody");
+  assert.equal(exited?.selectionStart, "---\r\ntitle: x\r\n\r\n---\r\n".length);
+  assertOnlyCrlfLineBreaks(exited?.value ?? "");
+});
+
+test("Front Matter protects YAML shortcuts and unwraps only at the absolute content start", () => {
+  const source = "---\n- item\n# title\n---\nBody";
+  assert.equal(
+    continueMarkdownBlock({
+      value: source,
+      selectionStart: source.indexOf("item") + "item".length,
+      selectionEnd: source.indexOf("item") + "item".length,
+    }),
+    null,
+  );
+  assert.equal(
+    applyMarkdownSpaceShortcut({
+      value: source,
+      selectionStart: source.indexOf("#") + 1,
+      selectionEnd: source.indexOf("#") + 1,
+    }),
+    null,
+  );
+  assert.equal(
+    outdentMarkdownListOnBackspace({
+      value: source,
+      selectionStart: source.indexOf("item"),
+      selectionEnd: source.indexOf("item"),
+    }),
+    null,
+  );
+  assert.equal(
+    unwrapMarkdownBlockOnBackspace({
+      value: source,
+      selectionStart: source.indexOf("title"),
+      selectionEnd: source.indexOf("title"),
+    }),
+    null,
+  );
+
+  const unwrapped = unwrapMarkdownBlockOnBackspace({
+    value: source,
+    selectionStart: "---\n".length,
+    selectionEnd: "---\n".length,
+  });
+  assert.deepEqual(unwrapped, {
+    value: "- item\n# title\nBody",
+    selectionStart: 0,
+    selectionEnd: 0,
+  });
+});
+
+test("splitMarkdownParagraphOnEnter copies complete ATX heading patterns", () => {
+  const middle = "## AlphaBeta ##";
+  const middleCursor = middle.indexOf("Beta");
+  assert.deepEqual(
+    splitMarkdownParagraphOnEnter({
+      value: middle,
+      selectionStart: middleCursor,
+      selectionEnd: middleCursor,
+    }),
+    {
+      value: "## Alpha ##\n\n## Beta ##",
+      selectionStart: "## Alpha ##\n\n## ".length,
+      selectionEnd: "## Alpha ##\n\n## ".length,
+    },
+  );
+
+  const start = "## Alpha ##";
+  const startCursor = start.indexOf("Alpha");
+  assert.deepEqual(
+    splitMarkdownParagraphOnEnter({ value: start, selectionStart: startCursor, selectionEnd: startCursor }),
+    { value: "\n\n## Alpha ##", selectionStart: 0, selectionEnd: 0 },
+  );
+  const endCursor = start.indexOf(" ##");
+  assert.deepEqual(
+    splitMarkdownParagraphOnEnter({ value: start, selectionStart: endCursor, selectionEnd: endCursor }),
+    {
+      value: "## Alpha ##\n\n",
+      selectionStart: "## Alpha ##\n\n".length,
+      selectionEnd: "## Alpha ##\n\n".length,
+    },
+  );
+
+  const quoted = "> ## AlphaBeta ##";
+  const quotedCursor = quoted.indexOf("Beta");
+  assert.deepEqual(
+    splitMarkdownParagraphOnEnter({
+      value: quoted,
+      selectionStart: quotedCursor,
+      selectionEnd: quotedCursor,
+    }),
+    {
+      value: "> ## Alpha ##\n>\n> ## Beta ##",
+      selectionStart: "> ## Alpha ##\n>\n> ## ".length,
+      selectionEnd: "> ## Alpha ##\n>\n> ## ".length,
+    },
+  );
+});
+
+test("splitMarkdownParagraphOnEnter ignores heading syntax inside raw blocks", () => {
+  const fenced = "```md\n## AlphaBeta ##\n```";
+  const fencedCursor = fenced.indexOf("Beta");
+  assert.equal(
+    splitMarkdownParagraphOnEnter({
+      value: fenced,
+      selectionStart: fencedCursor,
+      selectionEnd: fencedCursor,
+    }),
+    null,
+  );
+
+  const html = "<section>\n## AlphaBeta ##\n</section>";
+  const htmlCursor = html.indexOf("Beta");
+  assert.equal(
+    splitMarkdownParagraphOnEnter({ value: html, selectionStart: htmlCursor, selectionEnd: htmlCursor }),
+    null,
+  );
+
+  const frontMatter = "---\nAlphaBeta\n===\n---";
+  const frontMatterCursor = frontMatter.indexOf("Beta");
+  assert.equal(
+    splitMarkdownParagraphOnEnter({
+      value: frontMatter,
+      selectionStart: frontMatterCursor,
+      selectionEnd: frontMatterCursor,
+    }),
+    null,
+  );
+});
+
+test("splitMarkdownParagraphOnEnter copies Setext patterns with quotes and CRLF", () => {
+  const source = "AlphaBeta\n===";
+  const cursor = source.indexOf("Beta");
+  assert.deepEqual(
+    splitMarkdownParagraphOnEnter({ value: source, selectionStart: cursor, selectionEnd: cursor }),
+    {
+      value: "Alpha\n===\n\nBeta\n===",
+      selectionStart: "Alpha\n===\n\n".length,
+      selectionEnd: "Alpha\n===\n\n".length,
+    },
+  );
+
+  const quoted = "> AlphaBeta\r\n> ===";
+  const quotedCursor = quoted.indexOf("Beta");
+  const result = splitMarkdownParagraphOnEnter({
+    value: quoted,
+    selectionStart: quotedCursor,
+    selectionEnd: quotedCursor,
+  });
+  assert.deepEqual(result, {
+    value: "> Alpha\r\n> ===\r\n>\r\n> Beta\r\n> ===",
+    selectionStart: "> Alpha\r\n> ===\r\n>\r\n> ".length,
+    selectionEnd: "> Alpha\r\n> ===\r\n>\r\n> ".length,
+  });
+  assertOnlyCrlfLineBreaks(result?.value ?? "");
+});
+
+test("unwrapMarkdownBlockOnBackspace removes complete heading patterns", () => {
+  const atx = "## Alpha ##";
+  const atxCursor = atx.indexOf("Alpha");
+  assert.deepEqual(
+    unwrapMarkdownBlockOnBackspace({ value: atx, selectionStart: atxCursor, selectionEnd: atxCursor }),
+    { value: "Alpha", selectionStart: 0, selectionEnd: 0 },
+  );
+
+  const setext = "Alpha\n===\nBody";
+  assert.deepEqual(
+    unwrapMarkdownBlockOnBackspace({ value: setext, selectionStart: 0, selectionEnd: 0 }),
+    { value: "Alpha\nBody", selectionStart: 0, selectionEnd: 0 },
+  );
+  const prefixed = "before\nAlpha\n===\nBody";
+  const contentStart = prefixed.indexOf("Alpha");
+  assert.deepEqual(
+    unwrapMarkdownBlockOnBackspace({
+      value: prefixed,
+      selectionStart: contentStart,
+      selectionEnd: contentStart,
+    }),
+    {
+      value: "before\nAlpha\nBody",
+      selectionStart: contentStart,
+      selectionEnd: contentStart,
+    },
+  );
+});
+
+test("splitMarkdownContainerParagraphOnPrimaryEnter keeps the current container", () => {
+  const cases = [
+    ["- AlphaBeta", "- Alpha\n\n  Beta", "- Alpha\n\n  ".length],
+    ["12) AlphaBeta", "12) Alpha\n\n    Beta", "12) Alpha\n\n    ".length],
+    ["- [x] AlphaBeta", "- [x] Alpha\n\n      Beta", "- [x] Alpha\n\n      ".length],
+    ["> AlphaBeta", "> Alpha\n>\n> Beta", "> Alpha\n>\n> ".length],
+    ["> - AlphaBeta", "> - Alpha\n>\n>   Beta", "> - Alpha\n>\n>   ".length],
+  ] as const;
+  for (const [source, value, selectionStart] of cases) {
+    const cursor = source.indexOf("Beta");
+    assert.deepEqual(
+      splitMarkdownContainerParagraphOnPrimaryEnter({
+        value: source,
+        selectionStart: cursor,
+        selectionEnd: cursor,
+      }),
+      { value, selectionStart, selectionEnd: selectionStart },
+    );
+  }
+
+  assert.deepEqual(
+    splitMarkdownContainerParagraphOnPrimaryEnter({
+      value: "- ",
+      selectionStart: 2,
+      selectionEnd: 2,
+    }),
+    { value: "- \n\n  ", selectionStart: 6, selectionEnd: 6 },
+  );
+});
+
+test("splitMarkdownContainerParagraphOnPrimaryEnter deletes selections and preserves CRLF", () => {
+  const source = "> - AlphaREMOVE Beta";
+  const selectionStart = source.indexOf("REMOVE");
+  const selectionEnd = selectionStart + "REMOVE ".length;
+  assert.deepEqual(
+    splitMarkdownContainerParagraphOnPrimaryEnter({ value: source, selectionStart, selectionEnd }),
+    {
+      value: "> - Alpha\n>\n>   Beta",
+      selectionStart: "> - Alpha\n>\n>   ".length,
+      selectionEnd: "> - Alpha\n>\n>   ".length,
+    },
+  );
+
+  const crlf = "1. AlphaBeta\r\n2. Tail";
+  const cursor = crlf.indexOf("Beta");
+  const result = splitMarkdownContainerParagraphOnPrimaryEnter({
+    value: crlf,
+    selectionStart: cursor,
+    selectionEnd: cursor,
+  });
+  assert.equal(result?.value, "1. Alpha\r\n\r\n   Beta\r\n2. Tail");
+  assertOnlyCrlfLineBreaks(result?.value ?? "");
 });
 
 test("continueMarkdownBlock closes newly opened math fences", () => {
@@ -3631,6 +5140,31 @@ test("continueMarkdownBlock turns a pipe header into a table", () => {
   assert.equal(quoted?.value, "> | Name | Age |\n> | --- | --- |\n> |  |  |");
   assert.equal(quoted?.selectionStart, "> | Name | Age |\n> | --- | --- |\n> | ".length);
   assert.equal(quoted?.selectionEnd, quoted?.selectionStart);
+});
+
+test("continueMarkdownBlock turns an explicit single-column pipe header into a table", () => {
+  const source = "| 标题 |";
+  const result = continueMarkdownBlock({
+    value: source,
+    selectionStart: source.length,
+    selectionEnd: source.length,
+  });
+
+  assert.deepEqual(result, {
+    value: "| 标题 |\n| --- |\n|  |",
+    selectionStart: "| 标题 |\n| --- |\n| ".length,
+    selectionEnd: "| 标题 |\n| --- |\n| ".length,
+  });
+
+  const ambiguous = "标题 |";
+  assert.equal(
+    continueMarkdownBlock({
+      value: ambiguous,
+      selectionStart: ambiguous.length,
+      selectionEnd: ambiguous.length,
+    }),
+    null,
+  );
 });
 
 test("continueMarkdownBlock treats four-space pipe lines as code instead of table shortcuts like Typora", () => {
@@ -3780,10 +5314,26 @@ test("continueMarkdownBlock appends a table row from the last body row", () => {
   assert.equal(result?.selectionEnd, result?.selectionStart);
 });
 
-test("continueMarkdownBlock completes horizontal rule marker lines", () => {
+test("continueMarkdownBlock creates Front Matter from a document-start dash marker", () => {
   assert.deepEqual(
     continueMarkdownBlock({ value: "---", selectionStart: 3, selectionEnd: 3 }),
-    { value: "---\n", selectionStart: 4, selectionEnd: 4 },
+    { value: "---\n\n---", selectionStart: 4, selectionEnd: 4 },
+  );
+  assert.deepEqual(
+    continueMarkdownBlock({ value: "\uFEFF---", selectionStart: 4, selectionEnd: 4 }),
+    { value: "\uFEFF---\n\n---", selectionStart: 5, selectionEnd: 5 },
+  );
+  assert.deepEqual(
+    continueMarkdownBlock({ value: "---\r\nBody", selectionStart: 3, selectionEnd: 3 }),
+    { value: "---\r\n\r\n---\r\nBody", selectionStart: 5, selectionEnd: 5 },
+  );
+});
+
+test("continueMarkdownBlock completes horizontal rule marker lines", () => {
+  const dashed = "before\n---";
+  assert.deepEqual(
+    continueMarkdownBlock({ value: dashed, selectionStart: dashed.length, selectionEnd: dashed.length }),
+    { value: `${dashed}\n`, selectionStart: dashed.length + 1, selectionEnd: dashed.length + 1 },
   );
   assert.deepEqual(
     continueMarkdownBlock({ value: "***", selectionStart: 3, selectionEnd: 3 }),
@@ -3792,6 +5342,10 @@ test("continueMarkdownBlock completes horizontal rule marker lines", () => {
   assert.deepEqual(
     continueMarkdownBlock({ value: "___", selectionStart: 3, selectionEnd: 3 }),
     { value: "___\n", selectionStart: 4, selectionEnd: 4 },
+  );
+  assert.deepEqual(
+    continueMarkdownBlock({ value: "+++", selectionStart: 3, selectionEnd: 3 }),
+    { value: "+++\n", selectionStart: 4, selectionEnd: 4 },
   );
   assert.equal(
     continueMarkdownBlock({ value: "--- trailing", selectionStart: 3, selectionEnd: 3 }),
@@ -3802,7 +5356,7 @@ test("continueMarkdownBlock completes horizontal rule marker lines", () => {
 test("applyMarkdownSpaceShortcut normalizes Typora-style line markers", () => {
   assert.deepEqual(
     applyMarkdownSpaceShortcut({ value: "*", selectionStart: 1, selectionEnd: 1 }),
-    { value: "- ", selectionStart: 2, selectionEnd: 2 },
+    { value: "* ", selectionStart: 2, selectionEnd: 2 },
   );
   assert.deepEqual(
     applyMarkdownSpaceShortcut({ value: "  >", selectionStart: 3, selectionEnd: 3 }),
@@ -3894,12 +5448,16 @@ test("applyMarkdownSpaceShortcut ignores markers inside raw HTML blocks like Typ
     applyMarkdownSpaceShortcut({ value: "> <div>\n> #", selectionStart: "> <div>\n> #".length, selectionEnd: "> <div>\n> #".length }),
     null,
   );
+  assert.equal(
+    applyMarkdownSpaceShortcut({ value: "<div>\n> literal\n*", selectionStart: "<div>\n> literal\n*".length, selectionEnd: "<div>\n> literal\n*".length }),
+    null,
+  );
 });
 
 test("applyMarkdownSpaceShortcut normalizes markers inside blockquotes", () => {
   assert.deepEqual(
     applyMarkdownSpaceShortcut({ value: "> *", selectionStart: "> *".length, selectionEnd: "> *".length }),
-    { value: "> - ", selectionStart: "> - ".length, selectionEnd: "> - ".length },
+    { value: "> * ", selectionStart: "> * ".length, selectionEnd: "> * ".length },
   );
   assert.deepEqual(
     applyMarkdownSpaceShortcut({ value: ">>", selectionStart: ">>".length, selectionEnd: ">>".length }),
@@ -3911,7 +5469,7 @@ test("applyMarkdownSpaceShortcut normalizes markers inside blockquotes", () => {
   );
   assert.deepEqual(
     applyMarkdownSpaceShortcut({ value: ">\t*", selectionStart: ">\t*".length, selectionEnd: ">\t*".length }),
-    { value: "> - ", selectionStart: "> - ".length, selectionEnd: "> - ".length },
+    { value: "> * ", selectionStart: "> * ".length, selectionEnd: "> * ".length },
   );
   assert.deepEqual(
     applyMarkdownSpaceShortcut({ value: "> []", selectionStart: "> []".length, selectionEnd: "> []".length }),
@@ -3960,6 +5518,11 @@ test("applyMarkdownSpaceShortcut preserves CRLF for generated horizontal rules",
     selectionEnd: "before\r\n> ---\r\n".length,
   });
   assertOnlyCrlfLineBreaks(quoted?.value ?? "");
+
+  assert.deepEqual(
+    applyMarkdownSpaceShortcut({ value: "+++", selectionStart: 3, selectionEnd: 3 }),
+    { value: "+++\n", selectionStart: 4, selectionEnd: 4 },
+  );
 });
 
 test("toggleTaskAtSelection toggles existing tasks or creates a task item", () => {
@@ -4392,6 +5955,10 @@ test("auto pair inserts pairs, skips existing closing char, and removes pairs on
     applyAutoPair({ value: "math", selectionStart: 0, selectionEnd: 4 }, "$"),
     { value: "$math$", selectionStart: 1, selectionEnd: 5 },
   );
+  assert.equal(
+    applyAutoPair({ value: "", selectionStart: 0, selectionEnd: 0 }, "$"),
+    null,
+  );
   assert.deepEqual(
     removeAutoPairOnBackspace({ value: "$$", selectionStart: 1, selectionEnd: 1 }),
     { value: "", selectionStart: 0, selectionEnd: 0 },
@@ -4759,21 +6326,23 @@ test("insertMarkdownTableTemplate selects the first header cell like Typora", ()
   assert.equal(result.value.slice(result.selectionStart, result.selectionEnd), "列 1");
 });
 
-test("insertMarkdownCalloutTemplate selects the editable body like Typora", () => {
+test("insertMarkdownCalloutTemplate converts the current paragraph like Typora", () => {
   const result = insertMarkdownCalloutTemplate({ value: "Intro", selectionStart: "Intro".length, selectionEnd: "Intro".length });
-  const expected = "Intro\n> [!NOTE]\n> 在这里编写提示内容。\n";
+  const expected = "> [!NOTE]\n> Intro";
 
   assert.equal(result.value, expected);
-  assert.equal(result.value.slice(result.selectionStart, result.selectionEnd), "在这里编写提示内容。");
+  assert.equal(result.selectionStart, expected.length);
+  assert.equal(result.selectionEnd, expected.length);
 });
 
 test("insertMarkdownCalloutTemplate preserves CRLF line endings", () => {
   const source = "Intro\r\n";
   const result = insertMarkdownCalloutTemplate({ value: source, selectionStart: source.length, selectionEnd: source.length });
-  const expected = "Intro\r\n\r\n> [!NOTE]\r\n> 在这里编写提示内容。\r\n";
+  const expected = "> [!NOTE]\r\n> Intro\r\n";
 
   assert.equal(result.value, expected);
-  assert.equal(result.value.slice(result.selectionStart, result.selectionEnd), "在这里编写提示内容。");
+  assert.equal(result.selectionStart, expected.length);
+  assert.equal(result.selectionEnd, expected.length);
   assertOnlyCrlfLineBreaks(result.value);
 });
 
@@ -4894,6 +6463,18 @@ test("insertMarkdownTableRow inserts above or below the current row", () => {
     }, "below").value,
     "| A | B |\n| --- | --- |\n| 1 | 2 |\n| 内容 | 内容 |\n| 3 | 4 |",
   );
+});
+
+test("insertMarkdownTableRow can create an empty row for the Typora table shortcut", () => {
+  const table = "| A | B |\n| --- | --- |\n| 1 | 2 |";
+  const result = insertMarkdownTableRow({
+    value: table,
+    selectionStart: table.indexOf("2"),
+    selectionEnd: table.indexOf("2"),
+  }, "below", "");
+
+  assert.equal(result.value, "| A | B |\n| --- | --- |\n| 1 | 2 |\n|  |  |");
+  assert.equal(result.selectionStart, result.selectionEnd);
 });
 
 test("insertMarkdownTableColumn inserts left or right of the current column", () => {
@@ -5045,6 +6626,15 @@ test("navigateMarkdownTableCell moves across table cells like Typora tab navigat
 
   assert.equal(previousHeader?.selectionStart, table.indexOf("B"));
   assert.equal(previousHeader?.selectionEnd, table.indexOf("B") + 1);
+
+  const compact = "| A | B |\n| - | :-: |\n| 1 | 2 |";
+  const compactNext = navigateMarkdownTableCell({
+    value: compact,
+    selectionStart: compact.indexOf("1"),
+    selectionEnd: compact.indexOf("1"),
+  }, "next");
+  assert.equal(compactNext?.selectionStart, compact.indexOf("2"));
+  assert.equal(compactNext?.selectionEnd, compact.indexOf("2") + 1);
 });
 
 test("navigateMarkdownTableCell appends a row from the last cell", () => {
@@ -5603,6 +7193,18 @@ test("setImageWidthInLine preserves markdown image title", () => {
   assert.equal(result?.value, '<img src="assets/logo large.png" alt="logo" width="480px" title="Logo title">');
 });
 
+test("setImageWidthInLine preserves an unwrapped image path with spaces", () => {
+  const result = setImageWidthInLine(
+    { value: '![logo](assets/my image.png "Image title")', selectionStart: 0, selectionEnd: 0 },
+    "480",
+  );
+
+  assert.equal(
+    result?.value,
+    '<img src="assets/my image.png" alt="logo" width="480px" title="Image title">',
+  );
+});
+
 test("setImageWidthInLine handles parenthesized image destinations like Typora", () => {
   const source = "before ![logo](assets/a(b).png) after";
   const result = setImageWidthInLine(
@@ -5683,6 +7285,64 @@ test("setImageWidthInLine escapes generated html image attributes", () => {
   );
 
   assert.equal(result?.value, '<img src="assets/a&amp;b.png" alt="a &quot;logo&quot;" width="480&quot;">');
+});
+
+test("clearMarkdownFormatting removes styles whose markers are outside the selection", () => {
+  const cases = [
+    ["before **left middle right** after", "**", "**"],
+    ["before *left middle right* after", "*", "*"],
+    ["before ==left middle right== after", "==", "=="],
+    ["before <u>left middle right</u> after", "<u>", "</u>"],
+    ["before <strong>left middle right</strong> after", "<strong>", "</strong>"],
+    ["before `left middle right` after", "`", "`"],
+  ] as const;
+
+  for (const [source, opening, closing] of cases) {
+    const selectionStart = source.indexOf("middle");
+    const result = clearMarkdownFormatting({
+      value: source,
+      selectionStart,
+      selectionEnd: selectionStart + "middle".length,
+    });
+    const expected = `before ${opening}left${closing} middle ${opening}right${closing} after`;
+    assert.deepEqual(result, {
+      value: expected,
+      selectionStart: expected.indexOf("middle"),
+      selectionEnd: expected.indexOf("middle") + "middle".length,
+    });
+  }
+});
+
+test("clearMarkdownFormatting removes only the selected portion of an inline link", () => {
+  const target = "https://example.com";
+  const source = `before [left middle right](${target}) after`;
+  const selectionStart = source.indexOf("middle");
+  const result = clearMarkdownFormatting({
+    value: source,
+    selectionStart,
+    selectionEnd: selectionStart + "middle".length,
+  });
+  const expected = `before [left](${target}) middle [right](${target}) after`;
+
+  assert.deepEqual(result, {
+    value: expected,
+    selectionStart: expected.indexOf("middle"),
+    selectionEnd: expected.indexOf("middle") + "middle".length,
+  });
+});
+
+test("clearMarkdownFormatting preserves unresolved reference syntax as literal text", () => {
+  const source = "before [left middle right][missing] after";
+  const selectionStart = source.indexOf("middle");
+  assert.deepEqual(clearMarkdownFormatting({
+    value: source,
+    selectionStart,
+    selectionEnd: selectionStart + "middle".length,
+  }), {
+    value: source,
+    selectionStart,
+    selectionEnd: selectionStart + "middle".length,
+  });
 });
 
 test("clearMarkdownFormatting removes inline wrappers from selection", () => {
@@ -5797,6 +7457,40 @@ test("clearMarkdownFormatting removes complex link wrappers like Typora", () => 
 
   assert.equal(result.value, "API [v2] and Logo [dark]");
   assert.equal(result.selectionEnd, "API [v2] and Logo [dark]".length);
+});
+
+test("clearMarkdownFormatting removes one cross-line formatting range structurally", () => {
+  const source = [
+    "foo_bar_baz and **bold",
+    "text** and ==mark",
+    "text== plus `code",
+    "span` and <u>HTML",
+    "span</u>",
+    "$$",
+    "x_1 + y_2",
+    "$$",
+    "after",
+  ].join("\r\n");
+  const expected = [
+    "foo_bar_baz and bold",
+    "text and mark",
+    "text plus code span and HTML",
+    "span",
+    "x_1 + y_2",
+    "after",
+  ].join("\r\n");
+  const result = clearMarkdownFormatting({
+    value: source,
+    selectionStart: 0,
+    selectionEnd: source.length,
+  });
+
+  assert.deepEqual(result, {
+    value: expected,
+    selectionStart: 0,
+    selectionEnd: expected.length,
+  });
+  assertOnlyCrlfLineBreaks(result.value);
 });
 
 test("clearMarkdownFormatting removes block markers from full-line selections", () => {
@@ -6013,4 +7707,164 @@ test("clearMarkdownFormatting keeps the cursor in Setext heading text like Typor
       selectionEnd: "Do".length,
     },
   );
+});
+
+test("toggleMarkdownInlineStyle formats every Setext heading line without changing its underline", () => {
+  const source = "First line\nSecond line\n---";
+  const secondStart = source.indexOf("Second");
+  assert.deepEqual(toggleMarkdownInlineStyle({
+    value: source,
+    selectionStart: secondStart,
+    selectionEnd: secondStart + "Second".length,
+  }, "**", "**"), {
+    value: "First line\n**Second** line\n---",
+    selectionStart: secondStart + 2,
+    selectionEnd: secondStart + 2 + "Second".length,
+  });
+
+  const across = toggleMarkdownInlineStyle({
+    value: source,
+    selectionStart: 0,
+    selectionEnd: source.indexOf(" line\n---"),
+  }, "*", "*");
+  assert.equal(across?.value, "*First line*\n*Second* line\n---");
+  assert.equal(across?.value.endsWith("\n---"), true);
+});
+
+test("insertMarkdownSoftBreak preserves container prefixes when replacing selections", () => {
+  const cases = [
+    ["- alpha beta", "beta", "- alpha   \n  "],
+    ["- [ ] task beta", "beta", "- [ ] task   \n      "],
+    ["> quote beta", "beta", "> quote   \n> "],
+    ["> - item beta", "beta", "> - item   \n>   "],
+  ] as const;
+
+  for (const [source, selected, expected] of cases) {
+    const start = source.indexOf(selected);
+    const result = insertMarkdownSoftBreak({
+      value: source,
+      selectionStart: start,
+      selectionEnd: start + selected.length,
+    });
+    assert.deepEqual(result, {
+      value: expected,
+      selectionStart: expected.length,
+      selectionEnd: expected.length,
+    });
+  }
+});
+
+test("Front Matter editing supports the YAML explicit end marker with CRLF", () => {
+  const source = "---\r\ntitle: x\r\n\r\n...\r\nAfter";
+  const emptyLine = source.indexOf("\r\n\r\n") + 2;
+  const exited = editMarkdownFrontMatterOnEnter({
+    value: source,
+    selectionStart: emptyLine,
+    selectionEnd: emptyLine,
+  });
+
+  assert.deepEqual(exited, {
+    value: "---\r\ntitle: x\r\n\r\n...\r\n\r\nAfter",
+    selectionStart: source.indexOf("After"),
+    selectionEnd: source.indexOf("After"),
+  });
+
+  const contentStart = "---\r\n".length;
+  assert.deepEqual(unwrapMarkdownBlockOnBackspace({
+    value: "---\r\ntitle: x\r\n...\r\nAfter",
+    selectionStart: contentStart,
+    selectionEnd: contentStart,
+  }), {
+    value: "title: x\r\nAfter",
+    selectionStart: 0,
+    selectionEnd: 0,
+  });
+});
+
+test("tagged dollar math supports Enter and protects raw editing semantics", () => {
+  assert.deepEqual(
+    continueMarkdownBlock({ value: "$$ {chapter 1}", selectionStart: 14, selectionEnd: 14 }),
+    { value: "$$ {chapter 1}\n\n$$", selectionStart: 15, selectionEnd: 15 },
+  );
+  assert.deepEqual(
+    continueMarkdownBlock({ value: "> $$ {{quote}}", selectionStart: 14, selectionEnd: 14 }),
+    { value: "> $$ {{quote}}\n> \n> $$", selectionStart: 17, selectionEnd: 17 },
+  );
+  const adjacentTagged = "$$ {one}\n$$ {two}";
+  assert.equal(
+    continueMarkdownBlock({ value: adjacentTagged, selectionStart: 8, selectionEnd: 8 }),
+    null,
+  );
+  const adjacentInvalid = "$$ {one}\n$$ {two} ";
+  assert.deepEqual(
+    continueMarkdownBlock({ value: adjacentInvalid, selectionStart: 8, selectionEnd: 8 }),
+    { value: "$$ {one}\n\n$$\n$$ {two} ", selectionStart: 9, selectionEnd: 9 },
+  );
+  const adjacentClosing = "$$ {one}\n$$";
+  assert.equal(
+    continueMarkdownBlock({ value: adjacentClosing, selectionStart: 8, selectionEnd: 8 }),
+    null,
+  );
+  for (const source of [
+    "$$ {one}\n   $$ {two}",
+    ">$$ {one}\n>   $$ {two}",
+    ">   $$ {one}\n>$$ {two}",
+    ">$$ {one}\r\n>  $$ {two}",
+    "> $$ {one}\n> \n> $$ {two}",
+    "> $$ {one}\r\n> \r\n> $$ {two}",
+    " > $$ {one}\n> $$ {two}",
+  ]) {
+    const cursor = source.search(/\r?\n/);
+    assert.equal(
+      continueMarkdownBlock({ value: source, selectionStart: cursor, selectionEnd: cursor }),
+      null,
+      source,
+    );
+  }
+  const overIndentedClosing = "$$ {one}\r\n    $$ {two}";
+  const overIndentedCursor = overIndentedClosing.indexOf("\r\n");
+  const overIndentedResult = continueMarkdownBlock({
+    value: overIndentedClosing,
+    selectionStart: overIndentedCursor,
+    selectionEnd: overIndentedCursor,
+  });
+  assert.ok(overIndentedResult);
+  assertOnlyCrlfLineBreaks(overIndentedResult.value);
+  const tabIndentedClosing = "$$ {one}\n\t$$ {two}";
+  const tabIndentedCursor = tabIndentedClosing.indexOf("\n");
+  assert.ok(continueMarkdownBlock({
+    value: tabIndentedClosing,
+    selectionStart: tabIndentedCursor,
+    selectionEnd: tabIndentedCursor,
+  }));
+  const raw = "$$ {tag}\n- literal";
+  assert.equal(continueMarkdownBlock({ value: raw, selectionStart: raw.length, selectionEnd: raw.length }), null);
+  assert.equal(unwrapMarkdownBlockOnBackspace({
+    value: "$$ {tag}\n# literal",
+    selectionStart: "$$ {tag}\n# ".length,
+    selectionEnd: "$$ {tag}\n# ".length,
+  }), null);
+});
+
+test("tagged dollar math Enter preserves CRLF and rejects invalid openings", () => {
+  const source = "Before\r\n$$ {tag}";
+  const result = continueMarkdownBlock({
+    value: source,
+    selectionStart: source.length,
+    selectionEnd: source.length,
+  });
+  assert.deepEqual(result, {
+    value: "Before\r\n$$ {tag}\r\n\r\n$$",
+    selectionStart: "Before\r\n$$ {tag}\r\n".length,
+    selectionEnd: "Before\r\n$$ {tag}\r\n".length,
+  });
+  assertOnlyCrlfLineBreaks(result?.value ?? "");
+
+  for (const opening of ["$$ {}", "$$ {tag", "$$ {tag} ", "$$ {tag} trailing"]) {
+    assert.equal(continueMarkdownBlock({
+      value: opening,
+      selectionStart: opening.length,
+      selectionEnd: opening.length,
+    }), null, opening);
+  }
 });

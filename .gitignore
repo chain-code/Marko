@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-lib/
 src-tauri/target/
 src-tauri/gen/
 .tmp-tests/

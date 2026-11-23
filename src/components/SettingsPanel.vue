@@ -148,11 +148,24 @@
             <section class="settings-group">
               <h3>输入</h3>
               <label class="setting-row">
-                <span><strong>缩进宽度</strong><small>Tab 和 Shift+Tab 使用的空格数</small></span>
+                <span><strong>Markdown 缩进宽度</strong><small>列表和 Markdown 层级缩进使用的空格数</small></span>
                 <select class="field" :value="modelValue.indentSize" @change="update('indentSize', numberValue($event))">
                   <option :value="2">2 个空格</option>
                   <option :value="4">4 个空格</option>
                 </select>
+              </label>
+              <label class="setting-row">
+                <span><strong>代码缩进宽度</strong><small>代码块、数学块和 HTML 块使用的空格数</small></span>
+                <select class="field" :value="modelValue.codeIndentSize" @change="update('codeIndentSize', numberValue($event))">
+                  <option :value="2">2 个空格</option>
+                  <option :value="3">3 个空格</option>
+                  <option :value="4">4 个空格</option>
+                  <option :value="5">5 个空格</option>
+                </select>
+              </label>
+              <label class="setting-row switch-row">
+                <span><strong>Shift+Tab 自动缩进</strong><small>在代码、数学和 HTML 原始块中自动调整当前选中行</small></span>
+                <input type="checkbox" :checked="modelValue.shiftTabAutoIndent" @change="update('shiftTabAutoIndent', checkedValue($event))" />
               </label>
               <label class="setting-row switch-row">
                 <span><strong>自动配对</strong><small>自动匹配括号、引号和 Markdown 符号</small></span>
@@ -183,8 +196,12 @@
                 <input type="checkbox" :checked="modelValue.typewriterCenter" @change="update('typewriterCenter', checkedValue($event))" />
               </label>
               <label class="setting-row switch-row">
-                <span><strong>智能标点</strong><small>渲染智能引号、破折号和省略号</small></span>
-                <input type="checkbox" :checked="modelValue.smartPunctuation" @change="update('smartPunctuation', checkedValue($event))" />
+                <span><strong>智能引号</strong><small>将直引号渲染为弯引号</small></span>
+                <input type="checkbox" :checked="modelValue.smartQuotes" @change="update('smartQuotes', checkedValue($event))" />
+              </label>
+              <label class="setting-row switch-row">
+                <span><strong>智能破折号与省略号</strong><small>将 --、--- 和 ... 渲染为排版符号</small></span>
+                <input type="checkbox" :checked="modelValue.smartDashes" @change="update('smartDashes', checkedValue($event))" />
               </label>
               <label class="setting-row switch-row">
                 <span><strong>保留单个换行</strong><small>将源码中的单个换行渲染为可见换行</small></span>
@@ -196,9 +213,25 @@
           <template v-else-if="activeSection === 'markdown'">
             <section class="settings-group">
               <h3>代码块</h3>
-              <label class="setting-row stack-row">
-                <span><strong>默认代码语言</strong><small>通过菜单插入代码块时使用，留空则不指定</small></span>
-                <input class="field" :value="modelValue.defaultCodeLanguage" placeholder="例如 ts、go、python" @input="update('defaultCodeLanguage', inputValue($event))" />
+              <label class="setting-row">
+                <span><strong>默认代码语言</strong><small>可不指定、使用最近的代码语言或设置固定语言</small></span>
+                <select class="field" :value="codeLanguageMode" @change="updateCodeLanguageMode($event)">
+                  <option value="none">不指定</option>
+                  <option value="last">最近使用</option>
+                  <option value="fixed">固定语言</option>
+                </select>
+              </label>
+              <label v-if="codeLanguageMode === 'fixed'" class="setting-row stack-row">
+                <span><strong>固定语言</strong><small>填写代码围栏使用的语言标识</small></span>
+                <input class="field" :value="fixedCodeLanguage" placeholder="例如 ts、go、python" @input="updateFixedCodeLanguage($event)" />
+              </label>
+              <label class="setting-row">
+                <span><strong>应用默认语言时机</strong><small>分别控制 Markdown 围栏输入和菜单插入</small></span>
+                <select class="field" :value="modelValue.defaultCodeLanguageApplyTo" @change="updateSelect('defaultCodeLanguageApplyTo', $event)">
+                  <option value="markdown">通过 Markdown 输入</option>
+                  <option value="menu">通过菜单插入</option>
+                  <option value="both">两者</option>
+                </select>
               </label>
               <label class="setting-row switch-row">
                 <span><strong>显示行号</strong><small>在渲染后的代码块左侧显示行号</small></span>
@@ -222,14 +255,27 @@
                   />
                 </label>
               </div>
+              <label class="setting-row" :class="{ disabled: !modelValue.extensions.math }">
+                <span><strong>&#x516C;&#x5F0F;&#x81EA;&#x52A8;&#x7F16;&#x53F7;</strong><small>&#x9009;&#x62E9;&#x663E;&#x793A;&#x516C;&#x5F0F;&#x7684;&#x7F16;&#x53F7;&#x8303;&#x56F4;</small></span>
+                <select
+                  class="field"
+                  :value="modelValue.autoNumberingForMath || 'none'"
+                  :disabled="!modelValue.extensions.math"
+                  @change="updateMathAutoNumbering($event)"
+                >
+                  <option value="none">&#x4E0D;&#x81EA;&#x52A8;&#x7F16;&#x53F7;</option>
+                  <option value="ams">&#x4EC5; AMS &#x73AF;&#x5883;</option>
+                  <option value="all">&#x6240;&#x6709;&#x663E;&#x793A;&#x516C;&#x5F0F;</option>
+                </select>
+              </label>
             </section>
           </template>
 
           <template v-else>
             <section class="settings-group">
-              <h3>插入图片时</h3>
+              <h3>插入本地媒体时</h3>
               <label class="setting-row">
-                <span><strong>本地图片处理</strong><small>控制拖入或选择图片后的文件位置</small></span>
+                <span><strong>本地媒体处理</strong><small>控制拖入图片、视频和音频，或选择图片后的文件位置</small></span>
                 <select class="field" :value="modelValue.imageInsertAction" @change="updateSelect('imageInsertAction', $event)">
                   <option value="none">无特殊操作</option>
                   <option value="current">复制到当前文件夹</option>
@@ -268,10 +314,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
 import { FileCode2, Image, PenLine, Settings2, SlidersHorizontal, X } from "lucide-vue-next";
-import type { EditorSettings, MarkdownExtensionSettings } from "@/types";
+import type { EditorSettings, MarkdownExtensionSettings, MathAutoNumbering } from "@/types";
 
 type SettingsSection = "general" | "editor" | "markdown" | "image";
-type SelectSettingKey = "theme" | "defaultLineEnding" | "defaultSidebarTab" | "emojiAutocomplete" | "imageInsertAction";
+type SelectSettingKey = "theme" | "defaultLineEnding" | "defaultSidebarTab" | "emojiAutocomplete" | "imageInsertAction" | "defaultCodeLanguageApplyTo";
+type CodeLanguageMode = "none" | "last" | "fixed";
 
 const props = defineProps<{
   modelValue: EditorSettings;
@@ -297,17 +344,25 @@ const extensionItems: Array<{
   { key: "autoLinks", label: "自动识别链接", description: "识别文本中的 URL 和邮箱地址" },
   { key: "html", label: "HTML", description: "解析内联和块级 HTML" },
   { key: "toc", label: "目录", description: "支持 [TOC] 文档目录" },
-  { key: "math", label: "数学公式", description: "支持行内和块级 KaTeX" },
+  { key: "math", label: "数学公式", description: "使用 MathJax 渲染行内和块级公式" },
   { key: "mermaid", label: "Mermaid", description: "渲染 Mermaid 图表" },
   { key: "flowchart", label: "Flowchart", description: "渲染 Flowchart 图表" },
+  { key: "sequence", label: "Sequence", description: "渲染 Typora 兼容的 Sequence 时序图" },
   { key: "footnote", label: "脚注", description: "支持脚注定义和引用" },
   { key: "alerts", label: "GitHub 风格警报框", description: "支持 NOTE、TIP、WARNING 等块" },
   { key: "emoji", label: "Emoji", description: "将 :smile: 等短码渲染为表情" },
-  { key: "marks", label: "高亮与上下标", description: "支持高亮、上标和下标" },
+  { key: "highlight", label: "高亮", description: "支持 ==highlight== 高亮语法" },
+  { key: "superscript", label: "上标", description: "支持 X^2^ 上标语法" },
+  { key: "subscript", label: "下标", description: "支持 H~2~O 下标语法" },
 ];
 
 const settingsPanelRef = ref<HTMLElement | null>(null);
 const activeSection = ref<SettingsSection>("general");
+const initialCodeLanguage = props.modelValue.defaultCodeLanguage;
+const codeLanguageMode = ref<CodeLanguageMode>(getCodeLanguageMode(initialCodeLanguage));
+const fixedCodeLanguage = ref(
+  initialCodeLanguage && initialCodeLanguage !== "__LAST" ? initialCodeLanguage : "",
+);
 const activeSectionLabel = computed(() => sections.find((item) => item.key === activeSection.value)?.label ?? "通用");
 
 onMounted(async () => {
@@ -334,6 +389,31 @@ function updateExtension(key: keyof MarkdownExtensionSettings, value: boolean) {
       [key]: value,
     },
   });
+}
+
+function updateMathAutoNumbering(event: Event) {
+  const value = (event.target as HTMLSelectElement).value;
+  const mode: MathAutoNumbering = value === "ams" || value === "all" ? value : false;
+  update("autoNumberingForMath", mode);
+}
+
+function updateCodeLanguageMode(event: Event) {
+  const mode = (event.target as HTMLSelectElement).value as CodeLanguageMode;
+  codeLanguageMode.value = mode;
+  update(
+    "defaultCodeLanguage",
+    mode === "last" ? "__LAST" : mode === "fixed" ? fixedCodeLanguage.value : "",
+  );
+}
+
+function updateFixedCodeLanguage(event: Event) {
+  fixedCodeLanguage.value = inputValue(event);
+  update("defaultCodeLanguage", fixedCodeLanguage.value);
+}
+
+function getCodeLanguageMode(value: string): CodeLanguageMode {
+  if (value === "__LAST") return "last";
+  return value ? "fixed" : "none";
 }
 
 function inputValue(event: Event): string {

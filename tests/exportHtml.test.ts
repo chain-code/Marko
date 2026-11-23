@@ -19,10 +19,12 @@ test("buildExportHtml renders a complete html document", () => {
 
   assert.match(html, /^<!doctype html>/);
   assert.match(html, /<title>A &quot;Title&quot;<\/title>/);
-  assert.match(html, /katex@0\.16\.47\/dist\/katex\.min\.css/);
+  assert.doesNotMatch(html, /katex@|mathjax@|tex-svg/);
   assert.match(html, /<h1/);
   assert.match(html, /Hello/);
-  assert.match(html, /katex/);
+  assert.match(html, /<mjx-container class="MathJax" jax="SVG"/);
+  assert.match(html, /<svg\b/);
+  assert.match(html, /mjx-container\[jax='SVG']/);
   assert.doesNotMatch(html, /mermaid\.esm\.min\.mjs|flowchart\.min\.js/);
 });
 
@@ -94,4 +96,16 @@ test("buildExportHtml preserves abbreviation definitions like Typora", () => {
   assert.match(html, /<abbr title="Hyper Text Markup Language">HTML<\/abbr>/);
   assert.match(html, /abbr\[title]\{cursor:help/);
   assert.doesNotMatch(html, /\*\[HTML]:/);
+});
+
+test("buildExportHtml omits YAML Front Matter like Typora", () => {
+  const html = buildExportHtml({
+    title: "Front Matter",
+    markdown: "---\ntitle: Internal title\nprivate: true\n---\n\n# Visible",
+    outline: [],
+    settings,
+  });
+
+  assert.match(html, /<h1[^>]*>Visible<\/h1>/);
+  assert.doesNotMatch(html, /frontmatter-block|Internal title|private: true/);
 });

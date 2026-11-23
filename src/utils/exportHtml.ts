@@ -15,6 +15,7 @@ export function buildExportHtml(options: BuildHtmlOptions): string {
     documentSource: options.markdown,
     outline: options.outline,
     settings: options.settings,
+    omitFrontMatter: true,
   });
   const runtimeScripts = buildExportRuntimeScripts(html, options.settings);
 
@@ -25,11 +26,11 @@ export function buildExportHtml(options: BuildHtmlOptions): string {
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<title>${escapeHtml(options.title || "Marko")}</title>`,
-    '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.css">',
     "<style>",
     "body{margin:0;background:#fff;color:#24272d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;line-height:1.72;}",
     ".markdown{max-width:860px;margin:0 auto;padding:48px 32px 72px;}",
-    "img{max-width:100%;height:auto;}pre{overflow:auto;padding:16px;background:#f6f8fa;border-radius:8px;}code{font-family:'JetBrains Mono',Consolas,monospace;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #d9dde3;padding:8px 12px;}blockquote{border-left:4px solid #d8e5ff;margin-left:0;padding-left:16px;color:#4b5563;}abbr[title]{cursor:help;text-decoration:underline dotted rgba(37,99,235,.55);text-underline-offset:.16rem;}dl{padding-left:8px;}dt{font-weight:650;}dd{border-left:2px solid #d8e5ff;margin:4px 0 10px 14px;padding-left:12px;}.math-block{overflow:auto;text-align:center;}.diagram-box{overflow:auto;border:1px solid #d9dde3;border-radius:8px;background:#fbfdff;margin:20px 0;padding:18px;}.diagram-source-panel{display:none;}.mermaid svg,.flowchart-render svg{display:block;max-width:100%;height:auto;margin:0 auto;}.diagram-error{color:#b91c1c;white-space:pre-wrap;}",
+    "img{max-width:100%;height:auto;}pre{overflow:auto;padding:16px;background:#f6f8fa;border-radius:8px;}code{font-family:'JetBrains Mono',Consolas,monospace;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #d9dde3;padding:8px 12px;}blockquote{border-left:4px solid #d8e5ff;margin-left:0;padding-left:16px;color:#4b5563;}abbr[title]{cursor:help;text-decoration:underline dotted rgba(37,99,235,.55);text-underline-offset:.16rem;}dl{padding-left:8px;}dt{font-weight:650;}dd{border-left:2px solid #d8e5ff;margin:4px 0 10px 14px;padding-left:12px;}.math-block{overflow:auto;text-align:center;}.diagram-box{overflow:auto;border:1px solid #d9dde3;border-radius:8px;background:#fbfdff;margin:20px 0;padding:18px;}.diagram-source-panel{display:none;}.mermaid svg,.flowchart-render svg,.sequence-render svg{display:block;max-width:100%;height:auto;margin:0 auto;}.sequence-fallback{margin:0;text-align:left;white-space:pre-wrap;}.diagram-error{color:#b91c1c;white-space:pre-wrap;}",
+    ".math-inline mjx-container[jax='SVG'],.math-block mjx-container[jax='SVG']{color:currentColor;max-width:100%;}.math-inline svg,.math-block svg{max-width:100%;}",
     "</style>",
     "</head>",
     "<body>",

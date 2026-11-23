@@ -1,17 +1,58 @@
-import { renumberOrderedListBlockAtLine } from "./editorBlocks";
-import { renderMarkdown } from "./markdown";
+import { renumberOrderedListBlockAtLine, splitMarkdownBlocks } from "./editorBlocks";
+import { markdownLanguage } from "@codemirror/lang-markdown";
 import {
+  incrementOrderedListNumber,
+  normalizeOrderedListNumber,
+} from "./orderedListNumber";
+import MarkdownIt from "markdown-it";
+import { renderMarkdown, renderMarkdownInlineSource } from "./markdown";
+import {
+  findMarkdownLinkAtCursor,
+  parseMarkdownLinkDestination,
   readMarkdownInlineLink,
   readMarkdownReferenceLink,
+  readMarkdownShortcutReferenceLink,
   replaceMarkdownLinkSyntax,
 } from "./markdownLinks";
 import { getPreviewLinkAction } from "./previewLinks";
+import { defaultEditorSettings } from "./editorSettings";
+import { collectMathDocumentItems } from "./mathRendering";
+import {
+  isDollarMathBlockClosing,
+  readDollarMathBlockOpening,
+} from "./mathSyntax";
+import {
+  isYamlFrontMatterClosing,
+  isYamlFrontMatterOpening,
+} from "./frontMatterSyntax";
+import {
+  getLeadingMarkdownIndent,
+  getMarkdownIndentWidth,
+  isMarkdownCodeIndented,
+  readMarkdownBlockquotePrefix,
+  stripMarkdownIndentColumns,
+  stripMarkdownListContainerMarkers,
+} from "./markdownIndent";
+import { collectInlineHtmlSyntax } from "./inlineSyntax";
+import { collectHighlightSyntax } from "./inlineStyleSyntax";
+import { normalizeCodeFenceInfoString } from "./codeFenceLanguage";
+import {
+  collectReferenceDefinitionSemantics,
+  normalizeMarkdownReferenceLabel,
+  type ReferenceDefinitionSemantics,
+} from "./referenceDefinitionSemantics";
 import type { EditorSettings } from "@/types";
 
 export interface TextState {
   value: string;
   selectionStart: number;
   selectionEnd: number;
+}
+
+export interface MarkdownEnterModifiers {
+  primary?: boolean;
+  shift?: boolean;
+  alt?: boolean;
 }
 
 export interface TextEditResult extends TextState {}
@@ -53,6 +94,32 @@ export interface PasteMarkdownPayload {
   html?: string;
 }
 
+export interface MarkdownSelectionProjectionOptions {
+  preserveInlineSemantics?: boolean;
+  includeHtml?: boolean;
+  includeMarks?: boolean;
+  includeHighlight?: boolean;
+  includeSuperscript?: boolean;
+  includeSubscript?: boolean;
+}
+
+export interface MarkdownSelectionProjection {
+  source: string;
+  markdown: string;
+  plainText: string;
+}
+
+interface MarkdownSelectionSemanticScope {
+  from: number;
+  to: number;
+  contentFrom: number;
+  contentTo: number;
+  open: string;
+  close: string;
+}
+
+type MarkdownSelectionSyntaxNode = ReturnType<typeof markdownLanguage.parser.parse>["topNode"];
+
 interface QuotedListMatch {
   quotePrefix: string;
   rawQuoteLength: number;
@@ -71,12 +138,6 @@ interface MarkdownImageMatch {
   title: string;
 }
 
-interface QuotedHeadingMatch {
-  quotePrefix: string;
-  rawQuoteLength: number;
-  contentIndent: string;
-  markerEnd: number;
-}
 
 interface SetextLineContext {
   content: string;
@@ -92,6 +153,42 @@ interface PastedInlineSemanticStyle {
   underline?: boolean;
   sub?: boolean;
   sup?: boolean;
+}
+
+interface MarkdownFrontMatterRange {
+  contentStart: number;
+  contentEnd: number;
+  closingContentEnd: number;
+  closingEnd: number;
+}
+
+interface MarkdownAtxHeadingPattern {
+  lineStart: number;
+  lineEnd: number;
+  contentStart: number;
+  contentEnd: number;
+  opening: string;
+  closing: string;
+  plainPrefix: string;
+  quotePrefix: string;
+}
+
+interface MarkdownSetextHeadingPattern {
+  headingStart: number;
+  headingEnd: number;
+  contentStart: number;
+  contentEnd: number;
+  titlePrefix: string;
+  titleSuffix: string;
+  underline: string;
+  quotePrefix: string;
+}
+
+interface MarkdownContainerParagraphPattern {
+  contentStart: number;
+  contentEnd: number;
+  separator: string;
+  continuation: string;
 }
 
 interface PastedDefinitionListEntry {
@@ -121,11 +218,37 @@ interface ListContinuationLine {
 }
 
 export const tableTemplate = "\n| 列 1 | 列 2 | 列 3 |\n| --- | :---: | --- |\n| 内容 | 内容 | 内容 |\n";
-const calloutPlaceholder = "在这里编写提示内容。";
-export const calloutTemplate = `\n> [!NOTE]\n> ${calloutPlaceholder}\n`;
+type MarkdownCalloutKind = "NOTE" | "TIP" | "IMPORTANT" | "WARNING" | "CAUTION";
+const markdownCalloutKinds = new Set<MarkdownCalloutKind>([
+  "NOTE",
+  "TIP",
+  "IMPORTANT",
+  "WARNING",
+  "CAUTION",
+]);
+export const calloutTemplate = createMarkdownCalloutTemplate("NOTE");
 const footnotePlaceholder = "脚注内容";
 const mermaidTemplateSource = "flowchart LR\n  A[开始] --> B[结束]";
 const flowchartTemplateSource = "st=>start: 开始\ne=>end: 结束\nst->e";
+const sequenceTemplateSource = [
+  "Alice->Bob: Hello Bob, how are you?",
+  "Note right of Bob: Bob thinks",
+  "Bob-->Alice: I am good thanks!",
+].join("\n");
+const markdownHtmlEntityUtils = new MarkdownIt("zero").utils;
+const plainTextMarkdownSettings: EditorSettings = {
+  ...defaultEditorSettings,
+  extensions: {
+    ...defaultEditorSettings.extensions,
+    marks: true,
+  },
+};
+const clearFormatMarkdownSettings: EditorSettings = {
+  ...plainTextMarkdownSettings,
+  smartPunctuation: false,
+  smartQuotes: false,
+  smartDashes: false,
+};
 
 export function normalizeSelection(state: TextState): TextState {
   const selectionStart = Math.max(0, Math.min(state.selectionStart, state.selectionEnd));
@@ -195,14 +318,263 @@ export function getSelectedMarkdownHtml(
 }
 
 export function getPlainTextFromMarkdownSelection(markdown: string): string {
-  const plainLines = markdown
-    .split("\n")
-    .map((line) => stripBlockFormatting(stripInlineFormatting(line)));
+  const source = normalizeTablesForPlainTextRender(markdown);
+  const html = renderMarkdown(source, {
+    settings: plainTextMarkdownSettings,
+    documentSource: source,
+  });
+  return getVisibleTextFromMarkdownHtml(html, {
+    blockLayout: true,
+    includeComments: false,
+  });
+}
 
-  return plainLines
-    .filter((line, index) => !isPlainTextTableSeparatorLine(plainLines, index))
-    .map((line) => stripTablePipesForPlainText(line))
-    .join("\n");
+export function projectMarkdownSelectionSemantics(
+  source: string,
+  selectionStart: number,
+  selectionEnd: number,
+  options: MarkdownSelectionProjectionOptions = {},
+): MarkdownSelectionProjection {
+  const start = clampMarkdownSelectionOffset(Math.min(selectionStart, selectionEnd), source.length);
+  const end = clampMarkdownSelectionOffset(Math.max(selectionStart, selectionEnd), source.length);
+  const selectedSource = source.slice(start, end);
+  let markdown = selectedSource;
+
+  if (selectedSource && options.preserveInlineSemantics !== false) {
+    const scopes = collectMarkdownSelectionSemanticScopes(source, start, end, options);
+    markdown = [
+      ...scopes.map((scope) => scope.open),
+      selectedSource,
+      ...[...scopes].reverse().map((scope) => scope.close),
+    ].join("");
+  }
+
+  return {
+    source: selectedSource,
+    markdown,
+    plainText: getPlainTextFromMarkdownSelection(markdown),
+  };
+}
+
+function collectMarkdownSelectionSemanticScopes(
+  source: string,
+  selectionStart: number,
+  selectionEnd: number,
+  options: MarkdownSelectionProjectionOptions,
+): MarkdownSelectionSemanticScope[] {
+  const scopes: MarkdownSelectionSemanticScope[] = [];
+  const literalBlockRanges: Array<{ from: number; to: number }> = [];
+  const definitions = new Map<string, ReferenceDefinitionSemantics>();
+  for (const definition of collectReferenceDefinitionSemantics(source)) {
+    if (!definitions.has(definition.label.normalized)) {
+      definitions.set(definition.label.normalized, definition);
+    }
+  }
+
+  markdownLanguage.parser.parse(source).iterate({
+    enter(cursor) {
+      if (["FencedCode", "CodeBlock", "IndentedCode", "HTMLBlock"].includes(cursor.name)) {
+        literalBlockRanges.push({ from: cursor.from, to: cursor.to });
+        return false;
+      }
+      const scope = getParsedMarkdownSelectionSemanticScope(
+        source,
+        cursor.node,
+        definitions,
+        options,
+      );
+      if (scope && selectionInsideSemanticScope(selectionStart, selectionEnd, scope)) {
+        scopes.push(scope);
+      }
+      return undefined;
+    },
+  });
+
+  if (options.includeHighlight ?? options.includeMarks ?? true) {
+    for (const highlight of collectHighlightSyntax(source)) {
+      if (markdownSelectionRangeIntersects(
+        highlight.from,
+        highlight.to,
+        literalBlockRanges,
+      )) {
+        continue;
+      }
+      const scope: MarkdownSelectionSemanticScope = {
+        from: highlight.from,
+        to: highlight.to,
+        contentFrom: highlight.contentFrom,
+        contentTo: highlight.contentTo,
+        open: source.slice(highlight.from, highlight.contentFrom),
+        close: source.slice(highlight.contentTo, highlight.to),
+      };
+      if (selectionInsideSemanticScope(selectionStart, selectionEnd, scope)) {
+        scopes.push(scope);
+      }
+    }
+  }
+
+  if (options.includeHtml !== false) {
+    for (const html of collectInlineHtmlSyntax(source)) {
+      if (markdownSelectionRangeIntersects(html.start, html.end, literalBlockRanges)) {
+        continue;
+      }
+      const scope = getHtmlMarkdownSelectionSemanticScope(source, html.start, html.end);
+      if (scope && selectionInsideSemanticScope(selectionStart, selectionEnd, scope)) {
+        scopes.push(scope);
+      }
+    }
+  }
+
+  const unique = new Map<string, MarkdownSelectionSemanticScope>();
+  for (const scope of scopes) {
+    const key = [scope.from, scope.to, scope.contentFrom, scope.contentTo].join(":");
+    if (!unique.has(key)) unique.set(key, scope);
+  }
+  return [...unique.values()].sort((left, right) => (
+    left.from - right.from || right.to - left.to
+  ));
+}
+
+function getParsedMarkdownSelectionSemanticScope(
+  source: string,
+  node: MarkdownSelectionSyntaxNode,
+  definitions: ReadonlyMap<string, ReferenceDefinitionSemantics>,
+  options: MarkdownSelectionProjectionOptions,
+): MarkdownSelectionSemanticScope | null {
+  if (node.name === "Link") {
+    return getLinkMarkdownSelectionSemanticScope(source, node, definitions);
+  }
+
+  const markerName = {
+    StrongEmphasis: "EmphasisMark",
+    Emphasis: "EmphasisMark",
+    Strikethrough: "StrikethroughMark",
+    InlineCode: "CodeMark",
+    Subscript: "SubscriptMark",
+    Superscript: "SuperscriptMark",
+  }[node.name];
+  if (!markerName) return null;
+  if (
+    node.name === "Subscript"
+    && !(options.includeSubscript ?? options.includeMarks ?? true)
+  ) return null;
+  if (
+    node.name === "Superscript"
+    && !(options.includeSuperscript ?? options.includeMarks ?? true)
+  ) return null;
+
+  const markers = getMarkdownSelectionSyntaxChildren(node)
+    .filter((child) => child.name === markerName);
+  if (markers.length < 2) return null;
+  const first = markers[0]!;
+  const last = markers.at(-1)!;
+  return {
+    from: node.from,
+    to: node.to,
+    contentFrom: first.to,
+    contentTo: last.from,
+    open: source.slice(node.from, first.to),
+    close: source.slice(last.from, node.to),
+  };
+}
+
+function getLinkMarkdownSelectionSemanticScope(
+  source: string,
+  node: MarkdownSelectionSyntaxNode,
+  definitions: ReadonlyMap<string, ReferenceDefinitionSemantics>,
+): MarkdownSelectionSemanticScope | null {
+  const link = readMarkdownInlineLink(source, node.from)
+    ?? readMarkdownReferenceLink(source, node.from)
+    ?? readMarkdownShortcutReferenceLink(source, node.from);
+  if (!link || link.end !== node.to || link.imageStart !== null) return null;
+
+  let close = source.slice(link.labelEnd, link.end);
+  if (link.destinationStart === null) {
+    const referenceLabel = link.referenceLabel || link.label;
+    const definition = definitions.get(normalizeMarkdownReferenceLabel(referenceLabel));
+    if (!definition) return null;
+    const destination = formatProjectedLinkDestination(definition.url.value);
+    if (!destination) return null;
+    close = "](" + destination + formatProjectedLinkTitle(definition.title?.value ?? "") + ")";
+  }
+  return {
+    from: node.from,
+    to: node.to,
+    contentFrom: link.labelStart,
+    contentTo: link.labelEnd,
+    open: source.slice(node.from, link.labelStart),
+    close,
+  };
+}
+
+function getHtmlMarkdownSelectionSemanticScope(
+  source: string,
+  from: number,
+  to: number,
+): MarkdownSelectionSemanticScope | null {
+  const raw = source.slice(from, to);
+  const opening = raw.match(/^<[A-Za-z][\w:-]*(?:\s[^<>]*?)?>/);
+  const closing = raw.match(/<\/[A-Za-z][\w:-]*\s*>$/);
+  if (!opening || !closing) return null;
+  const contentFrom = from + opening[0].length;
+  const contentTo = to - closing[0].length;
+  if (contentTo <= contentFrom) return null;
+  return {
+    from,
+    to,
+    contentFrom,
+    contentTo,
+    open: opening[0],
+    close: closing[0],
+  };
+}
+
+function getMarkdownSelectionSyntaxChildren(
+  node: MarkdownSelectionSyntaxNode,
+): MarkdownSelectionSyntaxNode[] {
+  const children: MarkdownSelectionSyntaxNode[] = [];
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    children.push(child);
+  }
+  return children;
+}
+
+function selectionInsideSemanticScope(
+  selectionStart: number,
+  selectionEnd: number,
+  scope: MarkdownSelectionSemanticScope,
+): boolean {
+  return selectionEnd > selectionStart
+    && selectionStart >= scope.contentFrom
+    && selectionEnd <= scope.contentTo;
+}
+
+function formatProjectedLinkDestination(value: string): string {
+  const destination = value.trim();
+  if (!destination) return "";
+  return /[\s()]/.test(destination)
+    ? "<" + destination.replace(/>/g, "%3E") + ">"
+    : destination;
+}
+
+function formatProjectedLinkTitle(value: string): string {
+  const title = value.trim();
+  return title
+    ? " \"" + title.replace(/\\/g, "\\\\").replace(/"/g, "\\\"") + "\""
+    : "";
+}
+
+function clampMarkdownSelectionOffset(value: number, length: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(Math.trunc(value), length));
+}
+
+function markdownSelectionRangeIntersects(
+  from: number,
+  to: number,
+  ranges: ReadonlyArray<{ from: number; to: number }>,
+): boolean {
+  return ranges.some((range) => from < range.to && to > range.from);
 }
 
 export function wrapMarkdownSelection(
@@ -268,6 +640,988 @@ export function wrapMarkdownSelection(
   const selectionStart = normalized.selectionStart + before.length;
   const selectionEnd = selectionStart + selected.length;
   return { value, selectionStart, selectionEnd };
+}
+
+interface MarkdownInlineStylePair {
+  opening: string;
+  closing: string;
+}
+
+interface MarkdownInlineStyleDefinition {
+  kind: "delimiter" | "underline" | "code";
+  preferred: MarkdownInlineStylePair;
+  aliases: MarkdownInlineStylePair[];
+}
+
+interface MarkdownInlineStyleRange extends IndexRange {
+  contentStart: number;
+  contentEnd: number;
+  opening: string;
+  closing: string;
+  kind: MarkdownInlineStyleDefinition["kind"];
+}
+
+interface MarkdownInlineStyleParseResult {
+  ranges: MarkdownInlineStyleRange[];
+  ambiguous: IndexRange[];
+}
+
+interface MarkdownInlineStyleEdit extends IndexRange {
+  text: string;
+}
+
+export function toggleMarkdownInlineStyle(
+  state: TextState,
+  before: string,
+  after: string,
+): TextEditResult | null {
+  const normalized = normalizeSelection(state);
+  const definition = getMarkdownInlineStyleDefinition(before, after);
+  if (!definition) return null;
+
+  const parseSpans = collectMarkdownInlineStyleParseSpans(normalized.value);
+  const parsed = collectMarkdownInlineStyleRanges(normalized.value, definition, parseSpans);
+  if (normalized.selectionStart === normalized.selectionEnd) {
+    return toggleMarkdownInlineStyleAtCursor(normalized, definition, parsed, parseSpans);
+  }
+
+  const rawSegments = getMarkdownInlineStyleSelectionSegments(normalized);
+  if (!rawSegments?.length) return null;
+  const segments = rawSegments
+    .map((segment) => normalizeMarkdownInlineStyleSegment(segment, parsed.ranges, normalized.value))
+    .filter((segment) => segment.start < segment.end);
+  if (!segments.length) return null;
+
+  if (segments.length === 1) {
+    const containing = parsed.ranges.filter((range) => selectionIsInsideInlineStyleRange(
+      normalized.selectionStart,
+      normalized.selectionEnd,
+      range,
+    ));
+    if (containing.length > 1) return null;
+    if (containing.length === 1) {
+      return removeMarkdownInlineStyleFromSelection(normalized, definition, containing[0], parseSpans);
+    }
+  }
+
+  return applyMarkdownInlineStyleToSegments(normalized, definition, parsed, segments, parseSpans);
+}
+
+function getMarkdownInlineStyleDefinition(
+  before: string,
+  after: string,
+): MarkdownInlineStyleDefinition | null {
+  if ((before === "**" && after === "**") || (before === "__" && after === "__")) {
+    return {
+      kind: "delimiter",
+      preferred: { opening: before, closing: after },
+      aliases: [
+        { opening: "**", closing: "**" },
+        { opening: "__", closing: "__" },
+      ],
+    };
+  }
+  if ((before === "*" && after === "*") || (before === "_" && after === "_")) {
+    return {
+      kind: "delimiter",
+      preferred: { opening: before, closing: after },
+      aliases: [
+        { opening: "*", closing: "*" },
+        { opening: "_", closing: "_" },
+      ],
+    };
+  }
+  if (before === "<u>" && after === "</u>") {
+    return {
+      kind: "underline",
+      preferred: { opening: before, closing: after },
+      aliases: [{ opening: before, closing: after }],
+    };
+  }
+  if ([
+    ["<strong>", "</strong>"],
+    ["<b>", "</b>"],
+    ["<em>", "</em>"],
+    ["<i>", "</i>"],
+    ["<del>", "</del>"],
+    ["<s>", "</s>"],
+    ["<strike>", "</strike>"],
+    ["<mark>", "</mark>"],
+    ["<ins>", "</ins>"],
+    ["<sub>", "</sub>"],
+    ["<sup>", "</sup>"],
+  ].some(([opening, closing]) => before === opening && after === closing)) {
+    return {
+      kind: "underline",
+      preferred: { opening: before, closing: after },
+      aliases: [{ opening: before, closing: after }],
+    };
+  }
+  if (before === "`" && after === "`") {
+    return {
+      kind: "code",
+      preferred: { opening: before, closing: after },
+      aliases: [{ opening: before, closing: after }],
+    };
+  }
+  if (
+    (before === "~~" && after === "~~")
+    || (before === "==" && after === "==")
+    || (before === "^" && after === "^")
+    || (before === "~" && after === "~")
+  ) {
+    return {
+      kind: "delimiter",
+      preferred: { opening: before, closing: after },
+      aliases: [{ opening: before, closing: after }],
+    };
+  }
+  return null;
+}
+
+function toggleMarkdownInlineStyleAtCursor(
+  state: TextState,
+  definition: MarkdownInlineStyleDefinition,
+  parsed: MarkdownInlineStyleParseResult,
+  parseSpans: IndexRange[],
+): TextEditResult | null {
+  const cursor = state.selectionStart;
+  const allStyles = collectAllMarkdownInlineStyleRanges(state.value, parseSpans);
+  if (inlineStyleOffsetIsInsideMarker(cursor, allStyles)) return null;
+  if (
+    definition.kind !== "code"
+    && allStyles.some((range) => range.kind === "code" && cursor > range.start && cursor < range.end)
+  ) return null;
+  const restored = restoreMarkdownInlineStyleBoundary(state, definition);
+  if (restored) return restored;
+  if (!markdownInlineStyleCursorIsSafe(state.value, cursor, parseSpans)) return null;
+  if (parsed.ambiguous.some((range) => cursor >= range.start && cursor <= range.end)) return null;
+
+  const containing = parsed.ranges.filter((range) => cursor >= range.contentStart && cursor <= range.contentEnd);
+  if (containing.length > 1) return null;
+  if (containing.length === 1) {
+    const range = containing[0];
+    if (cursor === range.contentStart) {
+      return { value: state.value, selectionStart: range.start, selectionEnd: range.start };
+    }
+    if (cursor === range.contentEnd) {
+      return { value: state.value, selectionStart: range.end, selectionEnd: range.end };
+    }
+    if (markdownInlineStyleBoundaryIsComplex(state.value, cursor, range, parseSpans)) return null;
+
+    const left = state.value.slice(range.contentStart, cursor);
+    const right = state.value.slice(cursor, range.contentEnd);
+    if (definition.kind === "code" && (left.endsWith("`") || right.startsWith("`"))) return null;
+    const leftWrapped = wrapMarkdownInlineStyleContent(left, definition, range.opening, range.closing);
+    const rightWrapped = wrapMarkdownInlineStyleContent(right, definition, range.opening, range.closing);
+    const replacement = `${leftWrapped}${rightWrapped}`;
+    const value = `${state.value.slice(0, range.start)}${replacement}${state.value.slice(range.end)}`;
+    const nextCursor = range.start + leftWrapped.length;
+    return { value, selectionStart: nextCursor, selectionEnd: nextCursor };
+  }
+
+  const entering = parsed.ranges.find((range) => range.start === cursor || range.end === cursor);
+  if (entering) {
+    const nextCursor = entering.start === cursor ? entering.contentStart : entering.contentEnd;
+    return { value: state.value, selectionStart: nextCursor, selectionEnd: nextCursor };
+  }
+  const opening = definition.preferred.opening;
+  const closing = definition.preferred.closing;
+  const value = `${state.value.slice(0, cursor)}${opening}${closing}${state.value.slice(cursor)}`;
+  const nextCursor = cursor + opening.length;
+  return { value, selectionStart: nextCursor, selectionEnd: nextCursor };
+}
+
+function restoreMarkdownInlineStyleBoundary(
+  state: TextState,
+  definition: MarkdownInlineStyleDefinition,
+): TextEditResult | null {
+  const cursor = state.selectionStart;
+  if (definition.kind === "code") {
+    const leftLength = countBacktickRunBefore(state.value, cursor);
+    const rightLength = countBacktickRunAfter(state.value, cursor);
+    if (leftLength === 0 || leftLength !== rightLength) return null;
+    const value = `${state.value.slice(0, cursor - leftLength)}${state.value.slice(cursor + rightLength)}`;
+    const nextCursor = cursor - leftLength;
+    return { value, selectionStart: nextCursor, selectionEnd: nextCursor };
+  }
+
+  for (const pair of definition.aliases) {
+    const boundaries = [
+      { left: pair.opening, right: pair.closing },
+      { left: pair.closing, right: pair.opening },
+    ];
+    for (const boundary of boundaries) {
+      const boundaryStart = cursor - boundary.left.length;
+      if (boundaryStart < 0) continue;
+      if (state.value.slice(boundaryStart, cursor) !== boundary.left) continue;
+      if (state.value.slice(cursor, cursor + boundary.right.length) !== boundary.right) continue;
+      if (isEscapedAt(state.value, boundaryStart) || isEscapedAt(state.value, cursor)) continue;
+      const value = `${state.value.slice(0, boundaryStart)}${state.value.slice(cursor + boundary.right.length)}`;
+      return { value, selectionStart: boundaryStart, selectionEnd: boundaryStart };
+    }
+  }
+  return null;
+}
+
+function removeMarkdownInlineStyleFromSelection(
+  state: TextState,
+  definition: MarkdownInlineStyleDefinition,
+  range: MarkdownInlineStyleRange,
+  parseSpans: IndexRange[],
+): TextEditResult | null {
+  const selectionStart = state.selectionStart <= range.contentStart ? range.contentStart : state.selectionStart;
+  const selectionEnd = state.selectionEnd >= range.contentEnd ? range.contentEnd : state.selectionEnd;
+  if (selectionStart >= selectionEnd) return null;
+  if (
+    markdownInlineStyleBoundaryIsComplex(state.value, selectionStart, range, parseSpans)
+    || markdownInlineStyleBoundaryIsComplex(state.value, selectionEnd, range, parseSpans)
+  ) return null;
+
+  const left = state.value.slice(range.contentStart, selectionStart);
+  const selected = state.value.slice(selectionStart, selectionEnd);
+  const right = state.value.slice(selectionEnd, range.contentEnd);
+  const leftWrapped = wrapMarkdownInlineStyleContent(left, definition, range.opening, range.closing);
+  const rightWrapped = wrapMarkdownInlineStyleContent(right, definition, range.opening, range.closing);
+  const replacement = `${leftWrapped}${selected}${rightWrapped}`;
+  const value = `${state.value.slice(0, range.start)}${replacement}${state.value.slice(range.end)}`;
+  const nextSelectionStart = range.start + leftWrapped.length;
+  return {
+    value,
+    selectionStart: nextSelectionStart,
+    selectionEnd: nextSelectionStart + selected.length,
+  };
+}
+
+function applyMarkdownInlineStyleToSegments(
+  state: TextState,
+  definition: MarkdownInlineStyleDefinition,
+  parsed: MarkdownInlineStyleParseResult,
+  segments: IndexRange[],
+  parseSpans: IndexRange[],
+): TextEditResult | null {
+  const edits: MarkdownInlineStyleEdit[] = [];
+  const allStyles = collectAllMarkdownInlineStyleRanges(state.value, parseSpans);
+
+  for (const segment of segments) {
+    if (definition.kind !== "code" && /\r?\n\s*\r?\n/.test(state.value.slice(segment.start, segment.end))) {
+      return null;
+    }
+    if (
+      definition.kind !== "code"
+      && allStyles.some((range) => (
+        range.kind === "code"
+        && rangesOverlap(segment.start, segment.end, range.start, range.end)
+        && !(segment.start <= range.start && segment.end >= range.end)
+      ))
+    ) return null;
+    const alreadyFormatted = parsed.ranges.filter((range) => (
+      segment.start >= range.contentStart && segment.end <= range.contentEnd
+    ));
+    if (alreadyFormatted.length > 1) return null;
+    if (alreadyFormatted.length === 1) continue;
+
+    const affected = collectTouchingMarkdownInlineStyleRanges(segment, parsed.ranges);
+    if (markdownInlineStyleRangesOverlap(affected)) return null;
+    const groupStart = affected.reduce((start, range) => Math.min(start, range.contentStart), segment.start);
+    const groupEnd = affected.reduce((end, range) => Math.max(end, range.contentEnd), segment.end);
+    const sourceStart = affected.reduce((start, range) => Math.min(start, range.start), segment.start);
+    const sourceEnd = affected.reduce((end, range) => Math.max(end, range.end), segment.end);
+    if (
+      definition.kind !== "code"
+      && parsed.ambiguous.some((range) => rangesOverlap(range.start, range.end, sourceStart, sourceEnd))
+    ) {
+      return null;
+    }
+    if (
+      inlineStyleOffsetIsInsideMarker(groupStart, allStyles)
+      || inlineStyleOffsetIsInsideMarker(groupEnd, allStyles)
+    ) return null;
+
+    for (const range of affected) {
+      edits.push({ start: range.start, end: range.contentStart, text: "" });
+      edits.push({ start: range.contentEnd, end: range.end, text: "" });
+    }
+    const content = removeMarkdownInlineStyleWrappers(
+      state.value,
+      groupStart,
+      groupEnd,
+      affected,
+    );
+    if (markdownInlineStyleContentIsUnsupported(content, definition)) return null;
+    const applicationPair = getMarkdownInlineStyleApplicationPair(
+      state.value,
+      groupStart,
+      groupEnd,
+      content,
+      definition,
+      affected,
+    );
+    if (!applicationPair) return null;
+    const wrapper = getMarkdownInlineStyleWrapper(
+      content,
+      definition,
+      applicationPair.opening,
+      applicationPair.closing,
+    );
+    edits.push({ start: groupStart, end: groupStart, text: wrapper.opening });
+    edits.push({ start: groupEnd, end: groupEnd, text: wrapper.closing });
+  }
+
+  const compacted = compactMarkdownInlineStyleEdits(edits);
+  if (!compacted) return null;
+  const value = applyMarkdownInlineStyleEdits(state.value, compacted);
+  const selectionStart = mapMarkdownInlineStyleOffset(segments[0].start, "right", compacted);
+  const selectionEnd = mapMarkdownInlineStyleOffset(segments[segments.length - 1].end, "left", compacted);
+  return { value, selectionStart, selectionEnd };
+}
+
+function collectTouchingMarkdownInlineStyleRanges(
+  segment: IndexRange,
+  ranges: MarkdownInlineStyleRange[],
+): MarkdownInlineStyleRange[] {
+  let start = segment.start;
+  let end = segment.end;
+  const affected: MarkdownInlineStyleRange[] = [];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const range of ranges) {
+      if (affected.includes(range)) continue;
+      if (range.end < start || range.start > end) continue;
+      affected.push(range);
+      start = Math.min(start, range.start);
+      end = Math.max(end, range.end);
+      changed = true;
+    }
+  }
+  return affected.sort((left, right) => left.start - right.start);
+}
+
+function removeMarkdownInlineStyleWrappers(
+  value: string,
+  start: number,
+  end: number,
+  ranges: MarkdownInlineStyleRange[],
+): string {
+  const removals = ranges
+    .flatMap((range) => [
+      { start: range.start, end: range.contentStart },
+      { start: range.contentEnd, end: range.end },
+    ])
+    .filter((range) => range.start >= start && range.end <= end)
+    .sort((left, right) => right.start - left.start);
+  let content = value.slice(start, end);
+  for (const range of removals) {
+    const relativeStart = range.start - start;
+    const relativeEnd = range.end - start;
+    content = `${content.slice(0, relativeStart)}${content.slice(relativeEnd)}`;
+  }
+  return content;
+}
+
+function getMarkdownInlineStyleWrapper(
+  content: string,
+  definition: MarkdownInlineStyleDefinition,
+  opening = definition.preferred.opening,
+  closing = definition.preferred.closing,
+): MarkdownInlineStylePair {
+  if (definition.kind !== "code") return { opening, closing };
+  const marker = opening === closing && /^`+$/.test(opening)
+    && !content.includes(opening)
+    ? opening
+    : getCodeSpanMarker(content);
+  const needsPadding = marker.length > 1 && (/^`|`$/.test(content));
+  const padding = needsPadding ? " " : "";
+  return {
+    opening: `${marker}${padding}`,
+    closing: `${padding}${marker}`,
+  };
+}
+
+function getMarkdownInlineStyleApplicationPair(
+  value: string,
+  start: number,
+  end: number,
+  content: string,
+  definition: MarkdownInlineStyleDefinition,
+  removedRanges: MarkdownInlineStyleRange[],
+): MarkdownInlineStylePair | null {
+  if (definition.kind === "code") {
+    const leftBacktick = value[start - 1] === "`"
+      && !inlineStyleOffsetWillBeRemoved(start - 1, removedRanges);
+    const rightBacktick = value[end] === "`"
+      && !inlineStyleOffsetWillBeRemoved(end, removedRanges);
+    return leftBacktick || rightBacktick ? null : definition.preferred;
+  }
+  if (definition.kind === "underline") return definition.preferred;
+
+  const preferredCharacter = definition.preferred.opening[0];
+  const collision = content.startsWith(preferredCharacter)
+    || content.endsWith(preferredCharacter)
+    || (value[start - 1] === preferredCharacter && !inlineStyleOffsetWillBeRemoved(start - 1, removedRanges))
+    || (value[end] === preferredCharacter && !inlineStyleOffsetWillBeRemoved(end, removedRanges));
+  if (!collision) return definition.preferred;
+
+  const alternative = definition.aliases.find((pair) => pair.opening[0] !== preferredCharacter);
+  if (!alternative) return null;
+  const alternativeCharacter = alternative.opening[0];
+  return content.startsWith(alternativeCharacter)
+    || content.endsWith(alternativeCharacter)
+    || (value[start - 1] === alternativeCharacter && !inlineStyleOffsetWillBeRemoved(start - 1, removedRanges))
+    || (value[end] === alternativeCharacter && !inlineStyleOffsetWillBeRemoved(end, removedRanges))
+    ? null
+    : alternative;
+}
+
+function inlineStyleOffsetWillBeRemoved(
+  offset: number,
+  ranges: MarkdownInlineStyleRange[],
+): boolean {
+  return ranges.some((range) => (
+    (offset >= range.start && offset < range.contentStart)
+    || (offset >= range.contentEnd && offset < range.end)
+  ));
+}
+
+function wrapMarkdownInlineStyleContent(
+  content: string,
+  definition: MarkdownInlineStyleDefinition,
+  opening = definition.preferred.opening,
+  closing = definition.preferred.closing,
+): string {
+  if (!content) return "";
+  const leading = content.match(/^[ \t\r\n]+/)?.[0] ?? "";
+  const trailing = content.slice(leading.length).match(/[ \t\r\n]+$/)?.[0] ?? "";
+  const core = content.slice(leading.length, content.length - trailing.length);
+  if (!core) return content;
+  if (definition.kind !== "code") {
+    return `${leading}${opening}${core}${closing}${trailing}`;
+  }
+  const wrapper = getMarkdownInlineStyleWrapper(core, definition, opening, closing);
+  return `${leading}${wrapper.opening}${core}${wrapper.closing}${trailing}`;
+}
+
+function normalizeMarkdownInlineStyleSegment(
+  segment: IndexRange,
+  ranges: MarkdownInlineStyleRange[],
+  value: string,
+): IndexRange {
+  let start = segment.start;
+  let end = segment.end;
+  for (const range of ranges) {
+    if (start >= range.start && start < range.contentStart) start = range.contentStart;
+    if (start > range.contentEnd && start < range.end) start = range.contentEnd;
+    if (end > range.start && end < range.contentStart) end = range.contentStart;
+    if (end > range.contentEnd && end <= range.end) end = range.contentEnd;
+  }
+  while (start < end && isInlineStyleEdgeWhitespace(value[start])) start += 1;
+  while (end > start && isInlineStyleEdgeWhitespace(value[end - 1])) end -= 1;
+  return { start, end };
+}
+
+function isInlineStyleEdgeWhitespace(character: string | undefined): boolean {
+  return character === " " || character === "\t" || character === "\r" || character === "\n";
+}
+
+function selectionIsInsideInlineStyleRange(
+  selectionStart: number,
+  selectionEnd: number,
+  range: MarkdownInlineStyleRange,
+): boolean {
+  return selectionStart >= range.start
+    && selectionEnd <= range.end
+    && selectionStart < range.contentEnd
+    && selectionEnd > range.contentStart;
+}
+
+function markdownInlineStyleBoundaryIsComplex(
+  value: string,
+  boundary: number,
+  target: MarkdownInlineStyleRange,
+  parseSpans: IndexRange[],
+): boolean {
+  const ranges = collectAllMarkdownInlineStyleRanges(value, parseSpans);
+  for (const range of ranges) {
+    if (range.start === target.start && range.end === target.end) continue;
+    const targetContainsRange = range.start >= target.contentStart && range.end <= target.contentEnd;
+    if (targetContainsRange && boundary > range.start && boundary < range.end) return true;
+    const rangeContainsTarget = target.start >= range.contentStart && target.end <= range.contentEnd;
+    if (!targetContainsRange && !rangeContainsTarget && rangesOverlap(
+      range.start,
+      range.end,
+      target.start,
+      target.end,
+    )) return true;
+  }
+  return false;
+}
+
+function collectAllMarkdownInlineStyleRanges(value: string, parseSpans: IndexRange[]): MarkdownInlineStyleRange[] {
+  const pairs: MarkdownInlineStylePair[] = [
+    { opening: "**", closing: "**" },
+    { opening: "*", closing: "*" },
+    { opening: "~~", closing: "~~" },
+    { opening: "==", closing: "==" },
+    { opening: "^", closing: "^" },
+    { opening: "~", closing: "~" },
+    { opening: "<u>", closing: "</u>" },
+    { opening: "<strong>", closing: "</strong>" },
+    { opening: "<b>", closing: "</b>" },
+    { opening: "<em>", closing: "</em>" },
+    { opening: "<i>", closing: "</i>" },
+    { opening: "<del>", closing: "</del>" },
+    { opening: "<s>", closing: "</s>" },
+    { opening: "<strike>", closing: "</strike>" },
+    { opening: "<mark>", closing: "</mark>" },
+    { opening: "<ins>", closing: "</ins>" },
+    { opening: "<sub>", closing: "</sub>" },
+    { opening: "<sup>", closing: "</sup>" },
+    { opening: "`", closing: "`" },
+  ];
+  const ranges = pairs.flatMap((pair) => {
+    const definition = getMarkdownInlineStyleDefinition(pair.opening, pair.closing);
+    return definition ? collectMarkdownInlineStyleRanges(value, definition, parseSpans).ranges : [];
+  });
+  const unique = new Map<string, MarkdownInlineStyleRange>();
+  for (const range of ranges) unique.set(`${range.start}:${range.end}:${range.kind}`, range);
+  return [...unique.values()].sort((left, right) => left.start - right.start || right.end - left.end);
+}
+
+function collectMarkdownInlineStyleRanges(
+  value: string,
+  definition: MarkdownInlineStyleDefinition,
+  parseSpans: IndexRange[],
+): MarkdownInlineStyleParseResult {
+  if (definition.kind === "code") return collectMarkdownCodeStyleRanges(value, parseSpans);
+  const codeRanges = collectMarkdownCodeStyleRanges(value, parseSpans).ranges;
+  const ranges: MarkdownInlineStyleRange[] = [];
+  const ambiguous: IndexRange[] = [];
+  for (const span of parseSpans) {
+    for (const pair of definition.aliases) {
+      const parsed = definition.kind === "underline"
+        ? collectMarkdownHtmlStyleRanges(value, span, pair, codeRanges)
+        : collectMarkdownDelimiterStyleRanges(value, span, pair, codeRanges);
+      ranges.push(...parsed.ranges);
+      ambiguous.push(...parsed.ambiguous);
+    }
+  }
+  return {
+    ranges: ranges.sort((left, right) => left.start - right.start || right.end - left.end),
+    ambiguous,
+  };
+}
+
+function collectMarkdownCodeStyleRanges(
+  value: string,
+  parseSpans: IndexRange[],
+): MarkdownInlineStyleParseResult {
+  const ranges: MarkdownInlineStyleRange[] = [];
+  const ambiguous: IndexRange[] = [];
+  for (const span of parseSpans) {
+    let cursor = span.start;
+    while (cursor < span.end) {
+      if (value[cursor] !== "`" || isEscapedAt(value, cursor)) {
+        cursor += 1;
+        continue;
+      }
+      const openingStart = cursor;
+      const markerLength = countBacktickRunAfter(value, cursor);
+      const marker = "`".repeat(markerLength);
+      cursor += markerLength;
+      let closingStart = -1;
+      while (cursor < span.end) {
+        const next = value.indexOf("`", cursor);
+        if (next < 0 || next >= span.end) break;
+        const runLength = countBacktickRunAfter(value, next);
+        if (!isEscapedAt(value, next) && runLength === markerLength) {
+          closingStart = next;
+          break;
+        }
+        cursor = next + runLength;
+      }
+      if (closingStart < 0) {
+        ambiguous.push({ start: openingStart, end: openingStart + markerLength });
+        cursor = openingStart + markerLength;
+        continue;
+      }
+      const rawContentStart = openingStart + markerLength;
+      const rawContentEnd = closingStart;
+      const rawContent = value.slice(rawContentStart, rawContentEnd);
+      const hasSemanticPadding = rawContent.startsWith(" ")
+        && rawContent.endsWith(" ")
+        && Boolean(rawContent.trim());
+      ranges.push({
+        start: openingStart,
+        end: closingStart + markerLength,
+        contentStart: rawContentStart + (hasSemanticPadding ? 1 : 0),
+        contentEnd: rawContentEnd - (hasSemanticPadding ? 1 : 0),
+        opening: marker,
+        closing: marker,
+        kind: "code",
+      });
+      cursor = closingStart + markerLength;
+    }
+  }
+  return { ranges, ambiguous };
+}
+
+function collectMarkdownHtmlStyleRanges(
+  value: string,
+  span: IndexRange,
+  pair: MarkdownInlineStylePair,
+  protectedRanges: MarkdownInlineStyleRange[],
+): MarkdownInlineStyleParseResult {
+  const ranges: MarkdownInlineStyleRange[] = [];
+  const ambiguous: IndexRange[] = [];
+  const stack: number[] = [];
+  let cursor = span.start;
+  while (cursor < span.end) {
+    const opening = value.indexOf(pair.opening, cursor);
+    const closing = value.indexOf(pair.closing, cursor);
+    const next = opening < 0 ? closing : closing < 0 ? opening : Math.min(opening, closing);
+    if (next < 0 || next >= span.end) break;
+    const token = next === closing ? pair.closing : pair.opening;
+    const tokenEnd = next + token.length;
+    if (isEscapedAt(value, next) || rangesIntersectInlineStyle(next, tokenEnd, protectedRanges)) {
+      cursor = tokenEnd;
+      continue;
+    }
+    if (token === pair.opening) {
+      stack.push(next);
+    } else {
+      const start = stack.pop();
+      if (start === undefined) {
+        ambiguous.push({ start: next, end: tokenEnd });
+      } else if (stack.length > 0) {
+        ambiguous.push({ start, end: tokenEnd });
+      } else {
+        ranges.push({
+          start,
+          end: tokenEnd,
+          contentStart: start + pair.opening.length,
+          contentEnd: next,
+          opening: pair.opening,
+          closing: pair.closing,
+          kind: "underline",
+        });
+      }
+    }
+    cursor = tokenEnd;
+  }
+  for (const start of stack) ambiguous.push({ start, end: start + pair.opening.length });
+  return { ranges, ambiguous };
+}
+
+function collectMarkdownDelimiterStyleRanges(
+  value: string,
+  span: IndexRange,
+  pair: MarkdownInlineStylePair,
+  protectedRanges: MarkdownInlineStyleRange[],
+): MarkdownInlineStyleParseResult {
+  const ranges: MarkdownInlineStyleRange[] = [];
+  const ambiguous: IndexRange[] = [];
+  const marker = pair.opening;
+  let opener: number | null = null;
+  let cursor = span.start;
+  while (cursor < span.end) {
+    const next = value.indexOf(marker[0], cursor);
+    if (next < 0 || next >= span.end) break;
+    const runLength = countRepeatedCharacterRun(value, next, marker[0]);
+    const tokenEnd = next + runLength;
+    if (isEscapedAt(value, next) || rangesIntersectInlineStyle(next, tokenEnd, protectedRanges)) {
+      cursor = tokenEnd;
+      continue;
+    }
+    if (runLength !== marker.length) {
+      if (markdownDelimiterRunIsAmbiguous(marker, runLength)) ambiguous.push({ start: next, end: tokenEnd });
+      cursor = tokenEnd;
+      continue;
+    }
+
+    const flanking = getMarkdownDelimiterFlanking(value, next, tokenEnd, marker);
+    if (!flanking.canOpen && !flanking.canClose) {
+      cursor = tokenEnd;
+      continue;
+    }
+    if (opener !== null && flanking.canClose) {
+      if (next > opener + marker.length) {
+        const content = value.slice(opener + marker.length, next);
+        if ((marker === "^" || marker === "~") && hasUnescapedInlineStyleWhitespace(content)) {
+          ambiguous.push({ start: opener, end: tokenEnd });
+        } else {
+          ranges.push({
+            start: opener,
+            end: tokenEnd,
+            contentStart: opener + marker.length,
+            contentEnd: next,
+            opening: marker,
+            closing: marker,
+            kind: "delimiter",
+          });
+        }
+      } else {
+        ambiguous.push({ start: opener, end: tokenEnd });
+      }
+      opener = null;
+    } else if (flanking.canOpen && opener === null) {
+      opener = next;
+    } else {
+      ambiguous.push({ start: next, end: tokenEnd });
+    }
+    cursor = tokenEnd;
+  }
+  if (opener !== null) ambiguous.push({ start: opener, end: opener + marker.length });
+  return { ranges, ambiguous };
+}
+
+function getMarkdownDelimiterFlanking(
+  value: string,
+  start: number,
+  end: number,
+  marker: string,
+): { canOpen: boolean; canClose: boolean } {
+  const previous = start > 0 ? value[start - 1] : undefined;
+  const next = end < value.length ? value[end] : undefined;
+  const previousWhitespace = previous === undefined || /\s/u.test(previous);
+  const nextWhitespace = next === undefined || /\s/u.test(next);
+  if (marker[0] !== "*" && marker[0] !== "_") {
+    return { canOpen: !nextWhitespace, canClose: !previousWhitespace };
+  }
+
+  const previousPunctuation = previous !== undefined && /[\p{P}\p{S}]/u.test(previous);
+  const nextPunctuation = next !== undefined && /[\p{P}\p{S}]/u.test(next);
+  const leftFlanking = !nextWhitespace && (!nextPunctuation || previousWhitespace || previousPunctuation);
+  const rightFlanking = !previousWhitespace && (!previousPunctuation || nextWhitespace || nextPunctuation);
+  if (marker[0] === "_") {
+    return {
+      canOpen: leftFlanking && (!rightFlanking || previousPunctuation),
+      canClose: rightFlanking && (!leftFlanking || nextPunctuation),
+    };
+  }
+  return { canOpen: leftFlanking, canClose: rightFlanking };
+}
+
+function markdownDelimiterRunIsAmbiguous(marker: string, runLength: number): boolean {
+  if ((marker === "*" || marker === "_") && runLength === 2) return false;
+  if ((marker === "**" || marker === "__") && runLength === 1) return false;
+  if (marker === "~" && runLength === 2) return false;
+  if (marker === "~~" && runLength === 1) return false;
+  return runLength >= marker.length;
+}
+
+function countRepeatedCharacterRun(value: string, start: number, character: string): number {
+  let count = 0;
+  while (start + count < value.length && value[start + count] === character) count += 1;
+  return count;
+}
+
+function markdownInlineStyleContentIsUnsupported(
+  content: string,
+  definition: MarkdownInlineStyleDefinition,
+): boolean {
+  const marker = definition.preferred.opening;
+  return (marker === "^" || marker === "~") && hasUnescapedInlineStyleWhitespace(content);
+}
+
+function hasUnescapedInlineStyleWhitespace(value: string): boolean {
+  return /(^|[^\\])(?:\\\\)*\s/u.test(value);
+}
+
+function rangesIntersectInlineStyle(
+  start: number,
+  end: number,
+  ranges: MarkdownInlineStyleRange[],
+): boolean {
+  return ranges.some((range) => rangesOverlap(start, end, range.start, range.end));
+}
+
+function markdownInlineStyleRangesOverlap(ranges: MarkdownInlineStyleRange[]): boolean {
+  const sorted = [...ranges].sort((left, right) => left.start - right.start || left.end - right.end);
+  return sorted.some((range, index) => index > 0 && range.start < sorted[index - 1].end);
+}
+
+function rangesOverlap(leftStart: number, leftEnd: number, rightStart: number, rightEnd: number): boolean {
+  return leftStart < rightEnd && rightStart < leftEnd;
+}
+
+function inlineStyleOffsetIsInsideMarker(offset: number, ranges: MarkdownInlineStyleRange[]): boolean {
+  return ranges.some((range) => (
+    (offset > range.start && offset < range.contentStart)
+    || (offset > range.contentEnd && offset < range.end)
+  ));
+}
+
+function collectMarkdownInlineStyleParseSpans(value: string): IndexRange[] {
+  const spans: IndexRange[] = [];
+  for (const block of splitMarkdownBlocks(value)) {
+    const ranges = getMarkdownBlockInlineContentRanges(value, block.start, block.end, block.type);
+    if (ranges) spans.push(...ranges);
+  }
+  return spans.filter((range) => range.start < range.end);
+}
+
+function getMarkdownInlineStyleSelectionSegments(state: TextState): IndexRange[] | null {
+  const segments: IndexRange[] = [];
+  for (const block of splitMarkdownBlocks(state.value)) {
+    if (block.end <= state.selectionStart || block.start >= state.selectionEnd) continue;
+    const ranges = getMarkdownBlockInlineContentRanges(state.value, block.start, block.end, block.type);
+    if (!ranges) return null;
+    for (const range of ranges) {
+      const start = Math.max(range.start, state.selectionStart);
+      const end = Math.min(range.end, state.selectionEnd);
+      if (start < end) segments.push({ start, end });
+    }
+  }
+  return segments.sort((left, right) => left.start - right.start);
+}
+
+function getMarkdownBlockInlineContentRanges(
+  value: string,
+  blockStart: number,
+  blockEnd: number,
+  blockType: string,
+): IndexRange[] | null {
+  if (["code", "math", "frontmatter", "html", "rule", "reference", "abbreviation"].includes(blockType)) {
+    return null;
+  }
+  if (blockType === "paragraph") {
+    const end = trimMarkdownInlineBlockEnd(value, blockStart, blockEnd);
+    return end > blockStart ? [{ start: blockStart, end }] : [];
+  }
+
+  const lines = collectMarkdownInlineBlockLines(value, blockStart, blockEnd);
+  if (blockType === "heading") {
+    const first = lines[0];
+    if (!first) return [];
+    const prefix = first.text.match(/^[ \t]{0,3}#{1,6}(?:[ \t]+|$)/)?.[0] ?? "";
+    if (prefix) {
+      const closing = first.text.slice(prefix.length).match(/[ \t]+#+[ \t]*$/)?.[0] ?? "";
+      return [{ start: first.start + prefix.length, end: first.end - closing.length }];
+    }
+    const setextUnderline = lines.at(-1)?.text.match(/^[ \t]{0,3}(?:={2,}|-{2,})[ \t]*$/);
+    if (!setextUnderline) return [{ start: first.start, end: first.end }];
+    return lines.slice(0, -1).flatMap((line) => (
+      line.text.trim() ? [{ start: line.start, end: line.end }] : []
+    ));
+  }
+  if (blockType === "table") {
+    return lines.flatMap((line) => getMarkdownTableInlineContentRanges(value, line.start, line.end));
+  }
+
+  return lines.flatMap((line) => {
+    if (!line.text.trim()) return [];
+    let contentStart = 0;
+    const quote = line.text.match(/^(?:[ \t]{0,3}>[ \t]?)+/)?.[0] ?? "";
+    contentStart += quote.length;
+    const remainder = line.text.slice(contentStart);
+    const blockMarker = remainder.match(/^[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?|:[ \t]+|\[\^[^\]\r\n]*[^\]\s\r\n][^\]\r\n]*\]:[ \t]*)/)?.[0]
+      ?? remainder.match(/^[ \t]+/)?.[0]
+      ?? "";
+    contentStart += blockMarker.length;
+    const content = line.text.slice(contentStart);
+    const headingPrefix = content.match(/^#{1,6}(?:[ \t]+|$)/)?.[0] ?? "";
+    contentStart += headingPrefix.length;
+    const closing = line.text.slice(contentStart).match(/[ \t]+#+[ \t]*$/)?.[0] ?? "";
+    const start = line.start + contentStart;
+    const end = line.end - closing.length;
+    return start < end ? [{ start, end }] : [];
+  });
+}
+
+function collectMarkdownInlineBlockLines(
+  value: string,
+  start: number,
+  end: number,
+): Array<{ start: number; end: number; text: string }> {
+  const lines: Array<{ start: number; end: number; text: string }> = [];
+  let cursor = start;
+  while (cursor < end) {
+    const lineBreak = value.indexOf("\n", cursor);
+    const rawEnd = lineBreak < 0 || lineBreak >= end ? end : lineBreak;
+    const contentEnd = rawEnd > cursor && value[rawEnd - 1] === "\r" ? rawEnd - 1 : rawEnd;
+    lines.push({ start: cursor, end: contentEnd, text: value.slice(cursor, contentEnd) });
+    if (lineBreak < 0 || lineBreak >= end) break;
+    cursor = lineBreak + 1;
+  }
+  return lines;
+}
+
+function getMarkdownTableInlineContentRanges(value: string, start: number, end: number): IndexRange[] {
+  const line = value.slice(start, end);
+  const cells: IndexRange[] = [];
+  let cellStart = 0;
+  for (let index = 0; index <= line.length; index += 1) {
+    if (index < line.length && (line[index] !== "|" || isEscapedAt(line, index))) continue;
+    let contentStart = cellStart;
+    let contentEnd = index;
+    while (contentStart < contentEnd && /[ \t]/.test(line[contentStart])) contentStart += 1;
+    while (contentEnd > contentStart && /[ \t]/.test(line[contentEnd - 1])) contentEnd -= 1;
+    const content = line.slice(contentStart, contentEnd);
+    if (content && !/^:?-+:?$/.test(content)) {
+      cells.push({ start: start + contentStart, end: start + contentEnd });
+    }
+    cellStart = index + 1;
+  }
+  return cells;
+}
+
+function trimMarkdownInlineBlockEnd(value: string, start: number, end: number): number {
+  let nextEnd = end;
+  while (nextEnd > start && (value[nextEnd - 1] === "\n" || value[nextEnd - 1] === "\r")) nextEnd -= 1;
+  return nextEnd;
+}
+
+function markdownInlineStyleCursorIsSafe(value: string, cursor: number, parseSpans: IndexRange[]): boolean {
+  if (!value) return true;
+  if (parseSpans.some((span) => cursor >= span.start && cursor <= span.end)) return true;
+  const block = splitMarkdownBlocks(value).find((item) => cursor >= item.start && cursor <= item.end);
+  return !block || !["code", "math", "frontmatter", "html", "rule", "reference", "abbreviation"].includes(block.type);
+}
+
+function compactMarkdownInlineStyleEdits(edits: MarkdownInlineStyleEdit[]): MarkdownInlineStyleEdit[] | null {
+  const unique = new Map<string, MarkdownInlineStyleEdit>();
+  for (const edit of edits) unique.set(`${edit.start}:${edit.end}:${edit.text}`, edit);
+  const compacted = [...unique.values()];
+  const removals = compacted
+    .filter((edit) => edit.start < edit.end)
+    .sort((left, right) => left.start - right.start);
+  if (removals.some((edit, index) => index > 0 && edit.start < removals[index - 1].end)) return null;
+  return compacted;
+}
+
+function applyMarkdownInlineStyleEdits(value: string, edits: MarkdownInlineStyleEdit[]): string {
+  const sorted = [...edits].sort((left, right) => (
+    right.start - left.start
+    || Number(left.start === left.end) - Number(right.start === right.end)
+    || right.end - left.end
+  ));
+  let result = value;
+  for (const edit of sorted) {
+    result = `${result.slice(0, edit.start)}${edit.text}${result.slice(edit.end)}`;
+  }
+  return result;
+}
+
+function mapMarkdownInlineStyleOffset(
+  offset: number,
+  affinity: "left" | "right",
+  edits: MarkdownInlineStyleEdit[],
+): number {
+  let delta = 0;
+  const sorted = [...edits].sort((left, right) => left.start - right.start || left.end - right.end);
+  for (const edit of sorted) {
+    if (edit.start === edit.end) {
+      if (edit.start < offset || (edit.start === offset && affinity === "right")) delta += edit.text.length;
+      continue;
+    }
+    if (edit.end <= offset) {
+      delta += edit.text.length - (edit.end - edit.start);
+    } else if (edit.start < offset) {
+      return edit.start + delta + (affinity === "right" ? edit.text.length : 0);
+    }
+  }
+  return offset + delta;
 }
 
 export function wrapHtmlCommentSelection(
@@ -394,10 +1748,6 @@ function insertMarkdownBlockAtSelection(state: TextState, block: string): TextEd
 export function insertMarkdownSoftBreak(state: TextState): TextEditResult {
   const normalized = normalizeSelection(state);
   const lineBreak = getPreferredLineBreak(normalized.value);
-  if (normalized.selectionStart !== normalized.selectionEnd) {
-    return insertMarkdownAtSelection(normalized, `  ${lineBreak}`);
-  }
-
   const lineStart = normalized.value.lastIndexOf("\n", normalized.selectionStart - 1) + 1;
   if (isInsideMarkdownRawBlock(normalized.value, lineStart)) {
     return insertMarkdownAtSelection(normalized, lineBreak);
@@ -424,7 +1774,9 @@ export function pasteMarkdownContent(state: TextState, payload: PasteMarkdownPay
 
   const richMarkdown = payload.html ? buildMarkdownFromHtml(payload.html) : null;
   if (richMarkdown) {
-    return insertMarkdownBlockAtSelection(normalized, richMarkdown);
+    return payload.html && isInlineRichHtmlForMarkdown(payload.html)
+      ? insertMarkdownAtSelection(normalized, richMarkdown)
+      : insertMarkdownBlockAtSelection(normalized, richMarkdown);
   }
 
   const table = payload.html ? buildMarkdownTableFromHtml(payload.html) : null;
@@ -682,10 +2034,68 @@ export function formatMarkdownCodeBlock(
   };
 }
 
-export function insertMarkdownDiagramTemplate(state: TextState, language: "mermaid" | "flowchart"): TextEditResult {
+export function applyDefaultCodeLanguageOnFenceKey(
+  state: TextState,
+  key: string,
+  language: string,
+): TextEditResult | null {
+  const normalized = normalizeSelection(state);
+  if (
+    normalized.selectionStart !== normalized.selectionEnd
+    || (key !== "`" && key !== "~")
+  ) {
+    return null;
+  }
+
+  const info = normalizeCodeFenceInfoString(language, "```");
+  if (!info) return null;
+
+  const lineStart = normalized.value.lastIndexOf("\n", normalized.selectionStart - 1) + 1;
+  if (isInsideMarkdownRawBlock(normalized.value, lineStart)) return null;
+  const beforeCursor = normalized.value.slice(lineStart, normalized.selectionStart);
+  if (!beforeCursor.endsWith(key.repeat(2))) return null;
+  const lines = normalized.value.split("\n");
+  const lineIndex = findLineIndex(lines, lineStart);
+  lines[lineIndex] = beforeCursor + key;
+  const opening = getRawFenceOpeningAtLine(lines, lineIndex);
+  if (
+    !opening
+    || opening.fence.kind !== "code"
+    || opening.fence.marker[0] !== key
+    || opening.fence.marker.length !== 3
+  ) return null;
+
+  const physicalLineEnd = normalized.value.indexOf("\n", normalized.selectionStart);
+  const lineEnd = physicalLineEnd < 0 ? normalized.value.length : physicalLineEnd;
+  const contentEnd = normalized.value[lineEnd - 1] === "\r" ? lineEnd - 1 : lineEnd;
+  const afterCursor = normalized.value.slice(normalized.selectionStart, contentEnd);
+  if (afterCursor) return null;
+
+  const insertion = `${key}${info}`;
+  const value = [
+    normalized.value.slice(0, normalized.selectionStart),
+    insertion,
+    normalized.value.slice(normalized.selectionStart),
+  ].join("");
+  const selectionStart = normalized.selectionStart + 1;
+  return {
+    value,
+    selectionStart,
+    selectionEnd: selectionStart + info.length,
+  };
+}
+
+export function insertMarkdownDiagramTemplate(
+  state: TextState,
+  language: "mermaid" | "flowchart" | "sequence",
+): TextEditResult {
   const lineBreak = getPreferredLineBreak(state.value);
   const source = normalizeGeneratedLineBreaks(
-    language === "mermaid" ? mermaidTemplateSource : flowchartTemplateSource,
+    language === "mermaid"
+      ? mermaidTemplateSource
+      : language === "flowchart"
+        ? flowchartTemplateSource
+        : sequenceTemplateSource,
     lineBreak,
   );
   return formatMarkdownCodeBlock(state, language, source);
@@ -720,26 +2130,31 @@ function unwrapRawFenceBlock(state: TextState, kind: "code" | "math"): TextEditR
   const range = findClosedRawFenceBlock(state.value, state.selectionStart, state.selectionEnd, kind);
   if (!range) return null;
 
-  const openingLength = range.openEnd - range.openStart;
-  const closingLength = range.closeEnd - range.closeStart;
-  const value = `${state.value.slice(0, range.openStart)}${state.value.slice(range.openEnd, range.closeStart)}${state.value.slice(range.closeEnd)}`;
+  let value = "";
+  let cursor = 0;
+  for (const edit of range.unwrapEdits) {
+    value += state.value.slice(cursor, edit.start) + edit.text;
+    cursor = edit.end;
+  }
+  value += state.value.slice(cursor);
   return {
     value,
-    selectionStart: mapOffsetAfterRawFenceUnwrap(state.selectionStart, range, openingLength, closingLength),
-    selectionEnd: mapOffsetAfterRawFenceUnwrap(state.selectionEnd, range, openingLength, closingLength),
+    selectionStart: mapOffsetAfterRawFenceUnwrap(state.selectionStart, range.unwrapEdits),
+    selectionEnd: mapOffsetAfterRawFenceUnwrap(state.selectionEnd, range.unwrapEdits),
   };
 }
 
 function mapOffsetAfterRawFenceUnwrap(
   offset: number,
-  range: RawFenceBlockRange,
-  openingLength: number,
-  closingLength: number,
+  edits: RawFenceUnwrapEdit[],
 ): number {
-  if (offset <= range.openEnd) return range.openStart;
-  if (offset < range.closeStart) return offset - openingLength;
-  if (offset <= range.closeEnd) return range.closeStart - openingLength;
-  return offset - openingLength - closingLength;
+  let delta = 0;
+  for (const edit of edits) {
+    if (offset < edit.start) return offset + delta;
+    if (offset <= edit.end) return edit.start + delta + edit.text.length;
+    delta += edit.text.length - (edit.end - edit.start);
+  }
+  return offset + delta;
 }
 
 export function selectCurrentLine(state: TextState): TextEditResult {
@@ -1049,10 +2464,20 @@ export function deleteMarkdownLines(state: TextState): TextEditResult {
 }
 
 export function moveMarkdownLines(state: TextState, direction: "up" | "down"): TextEditResult {
+  return moveTextLines(state, direction, true);
+}
+
+function moveTextLines(
+  state: TextState,
+  direction: "up" | "down",
+  renumberOrderedLists: boolean,
+): TextEditResult {
   const normalized = normalizeSelection(state);
   const chunks = collectLineChunks(normalized.value);
   const range = getSelectedLineIndexes(chunks, normalized.selectionStart, normalized.selectionEnd);
-  const baseStartNumber = getOrderedListStartNumberAtLine(normalized.value, range.start);
+  const baseStartNumber = renumberOrderedLists
+    ? getOrderedListStartNumberAtLine(normalized.value, range.start)
+    : null;
 
   if (direction === "up") {
     if (range.start === 0) return normalized;
@@ -1064,12 +2489,14 @@ export function moveMarkdownLines(state: TextState, direction: "up" | "down"): T
       moved[moved.length - 1] = `${moved[moved.length - 1]}${lineBreak}`;
     }
     chunks.splice(range.start - 1, 0, ...moved);
-    const value = renumberOrderedListBlockAtLine(chunks.join(""), range.start - 1, baseStartNumber ?? undefined);
-    return {
-      value,
+    const result = {
+      value: chunks.join(""),
       selectionStart: Math.max(0, normalized.selectionStart - previousLength),
       selectionEnd: Math.max(0, normalized.selectionEnd - previousLength),
     };
+    return renumberOrderedLists
+      ? renumberMovedMarkdownSelection(result, range.start - 1, baseStartNumber ?? undefined)
+      : result;
   }
 
   if (range.end >= chunks.length - 1) return normalized;
@@ -1082,11 +2509,281 @@ export function moveMarkdownLines(state: TextState, direction: "up" | "down"): T
     nextLength += lineBreak.length;
   }
   chunks.splice(range.start + 1, 0, ...moved);
-  const value = renumberOrderedListBlockAtLine(chunks.join(""), range.start + 1, baseStartNumber ?? undefined);
-  return {
-    value,
+  const result = {
+    value: chunks.join(""),
     selectionStart: normalized.selectionStart + nextLength,
     selectionEnd: normalized.selectionEnd + nextLength,
+  };
+  return renumberOrderedLists
+    ? renumberMovedMarkdownSelection(result, range.start + 1, baseStartNumber ?? undefined)
+    : result;
+}
+
+export function moveMarkdownBlocks(state: TextState, direction: "up" | "down"): TextEditResult {
+  const normalized = normalizeSelection(state);
+  const frontMatterMove = moveMarkdownFrontMatterLines(normalized, direction);
+  if (frontMatterMove) return frontMatterMove;
+
+  const listItemMove = moveMarkdownListItems(normalized, direction);
+  if (listItemMove) return listItemMove;
+
+  const blocks = splitMarkdownBlocks(normalized.value);
+  if (blocks.length < 2) return normalized;
+  const selectionStart = findMarkdownBlockIndexAt(blocks, normalized.selectionStart);
+  const selectionEndProbe = normalized.selectionEnd > normalized.selectionStart
+    ? normalized.selectionEnd - 1
+    : normalized.selectionEnd;
+  const selectionEnd = findMarkdownBlockIndexAt(blocks, selectionEndProbe);
+  if (selectionStart < 0 || selectionEnd < selectionStart) return normalized;
+
+  const groupStart = blocks[selectionStart].start;
+  const groupEnd = blocks[selectionEnd + 1]?.start ?? normalized.value.length;
+  if (direction === "up") {
+    if (selectionStart === 0) return normalized;
+    if (blocks[selectionStart - 1].type === "frontmatter") return normalized;
+    return swapMarkdownRangeWithPrevious(
+      normalized,
+      blocks[selectionStart - 1].start,
+      getMarkdownBlockContentEnd(blocks[selectionStart - 1]),
+      groupStart,
+      getMarkdownBlockContentEnd(blocks[selectionEnd]),
+      groupEnd,
+    );
+  }
+
+  if (selectionEnd >= blocks.length - 1) return normalized;
+  const nextEnd = blocks[selectionEnd + 2]?.start ?? normalized.value.length;
+  return swapMarkdownRangeWithNext(
+    normalized,
+    groupStart,
+    getMarkdownBlockContentEnd(blocks[selectionEnd]),
+    groupEnd,
+    getMarkdownBlockContentEnd(blocks[selectionEnd + 1]),
+    nextEnd,
+  );
+}
+
+function moveMarkdownFrontMatterLines(
+  state: TextState,
+  direction: "up" | "down",
+): TextEditResult | null {
+  const frontMatter = findMarkdownFrontMatterRange(state.value);
+  if (!frontMatter || state.selectionStart >= frontMatter.closingEnd) return null;
+  if (state.selectionEnd > frontMatter.closingEnd) return state;
+
+  const chunks = collectLineChunks(state.value);
+  const range = getSelectedLineIndexes(chunks, state.selectionStart, state.selectionEnd);
+  const firstContentLine = getChunkIndexAtOffset(chunks, frontMatter.contentStart);
+  const closingLine = getChunkIndexAtOffset(chunks, frontMatter.contentEnd);
+  if (range.start < firstContentLine || range.end >= closingLine) return state;
+  if (direction === "up" && range.start === firstContentLine) return state;
+  if (direction === "down" && range.end === closingLine - 1) return state;
+  return moveTextLines(state, direction, false);
+}
+
+function moveMarkdownListItems(
+  state: TextState,
+  direction: "up" | "down",
+): TextEditResult | null {
+  const items: MarkdownSelectionSyntaxNode[] = [];
+  markdownLanguage.parser.parse(state.value).iterate({
+    enter(cursor) {
+      if (cursor.name === "ListItem") items.push(cursor.node);
+    },
+  });
+  if (items.length === 0) return null;
+
+  const endProbe = state.selectionEnd > state.selectionStart
+    ? state.selectionEnd - 1
+    : state.selectionEnd;
+  const first = findInnermostListItem(items, state.selectionStart);
+  const last = findInnermostListItem(items, endProbe);
+  if (!first || !last || !sameMarkdownSyntaxNode(first.parent, last.parent)) return null;
+  const parent = first.parent;
+  if (!parent) return null;
+  const siblings: MarkdownSelectionSyntaxNode[] = [];
+  for (let child = parent.firstChild; child; child = child.nextSibling) {
+    if (child.name === "ListItem") siblings.push(child);
+  }
+  const firstIndex = siblings.findIndex((item) => sameMarkdownSyntaxNode(item, first));
+  const lastIndex = siblings.findIndex((item) => sameMarkdownSyntaxNode(item, last));
+  if (firstIndex < 0 || lastIndex < firstIndex) return null;
+  if (direction === "up" && firstIndex === 0) return null;
+  if (direction === "down" && lastIndex >= siblings.length - 1) return null;
+
+  const groupStart = siblings[firstIndex].from;
+  const groupEnd = siblings[lastIndex + 1]?.from ?? getLineEndOffset(state.value, parent.to);
+  const baseStartNumber = getOrderedListStartNumberAtLine(
+    state.value,
+    findLineIndex(state.value.split("\n"), groupStart),
+  );
+  const moved = direction === "up"
+    ? swapMarkdownRangeWithPrevious(
+      state,
+      siblings[firstIndex - 1].from,
+      siblings[firstIndex - 1].to,
+      groupStart,
+      siblings[lastIndex].to,
+      groupEnd,
+    )
+    : swapMarkdownRangeWithNext(
+      state,
+      groupStart,
+      siblings[lastIndex].to,
+      groupEnd,
+      siblings[lastIndex + 1].to,
+      siblings[lastIndex + 2]?.from ?? getLineEndOffset(state.value, parent.to),
+    );
+  const insertionLine = findLineIndex(
+    moved.value.split("\n"),
+    Math.min(moved.selectionStart, moved.selectionEnd),
+  );
+  return renumberMovedMarkdownSelection(
+    moved,
+    insertionLine,
+    baseStartNumber ?? undefined,
+  );
+}
+
+function renumberMovedMarkdownSelection(
+  state: TextEditResult,
+  lineIndex: number,
+  startNumber?: string,
+): TextEditResult {
+  const value = renumberOrderedListBlockAtLine(state.value, lineIndex, startNumber);
+  if (value === state.value) return state;
+  return {
+    value,
+    selectionStart: mapOffsetAcrossLineRewrite(state.value, value, state.selectionStart),
+    selectionEnd: mapOffsetAcrossLineRewrite(state.value, value, state.selectionEnd),
+  };
+}
+
+function mapOffsetAcrossLineRewrite(before: string, after: string, offset: number): number {
+  const beforeChunks = collectLineChunks(before);
+  const afterChunks = collectLineChunks(after);
+  const lineIndex = getChunkIndexAtOffset(beforeChunks, Math.max(0, Math.min(offset, before.length)));
+  const beforeStart = getChunkStartOffset(beforeChunks, lineIndex);
+  const afterStart = getChunkStartOffset(afterChunks, Math.min(lineIndex, afterChunks.length - 1));
+  const beforeLine = stripLineBreak(beforeChunks[lineIndex] ?? "");
+  const afterLine = stripLineBreak(afterChunks[lineIndex] ?? "");
+  const column = Math.max(0, offset - beforeStart);
+
+  if (column > beforeLine.length) {
+    return afterStart + afterLine.length + Math.min(
+      column - beforeLine.length,
+      (afterChunks[lineIndex] ?? "").length - afterLine.length,
+    );
+  }
+
+  let commonPrefix = 0;
+  while (
+    commonPrefix < beforeLine.length
+    && commonPrefix < afterLine.length
+    && beforeLine[commonPrefix] === afterLine[commonPrefix]
+  ) {
+    commonPrefix += 1;
+  }
+  let commonSuffix = 0;
+  while (
+    commonSuffix < beforeLine.length - commonPrefix
+    && commonSuffix < afterLine.length - commonPrefix
+    && beforeLine[beforeLine.length - commonSuffix - 1] === afterLine[afterLine.length - commonSuffix - 1]
+  ) {
+    commonSuffix += 1;
+  }
+
+  const mappedColumn = column <= commonPrefix
+    ? column
+    : column >= beforeLine.length - commonSuffix
+      ? afterLine.length - (beforeLine.length - column)
+      : Math.min(afterLine.length - commonSuffix, commonPrefix + column - commonPrefix);
+  return afterStart + Math.max(0, mappedColumn);
+}
+
+function findInnermostListItem(
+  items: MarkdownSelectionSyntaxNode[],
+  position: number,
+): MarkdownSelectionSyntaxNode | null {
+  return items
+    .filter((item) => position >= item.from && position <= item.to)
+    .sort((left, right) => (left.to - left.from) - (right.to - right.from))[0]
+    ?? null;
+}
+
+function sameMarkdownSyntaxNode(
+  left: MarkdownSelectionSyntaxNode | null,
+  right: MarkdownSelectionSyntaxNode | null,
+): boolean {
+  return Boolean(
+    left
+    && right
+    && left.name === right.name
+    && left.from === right.from
+    && left.to === right.to,
+  );
+}
+
+function findMarkdownBlockIndexAt(
+  blocks: ReturnType<typeof splitMarkdownBlocks>,
+  position: number,
+): number {
+  for (let index = 0; index < blocks.length; index += 1) {
+    const nextStart = blocks[index + 1]?.start ?? Number.POSITIVE_INFINITY;
+    if (position >= blocks[index].start && position < nextStart) return index;
+  }
+  return blocks.length - 1;
+}
+
+function getMarkdownBlockContentEnd(
+  block: ReturnType<typeof splitMarkdownBlocks>[number],
+): number {
+  const trailingLineBreak = block.raw.match(/(?:\r\n|\n)$/)?.[0].length ?? 0;
+  return block.end - trailingLineBreak;
+}
+
+function getLineEndOffset(value: string, position: number): number {
+  const newline = value.indexOf("\n", Math.max(0, position));
+  return newline < 0 ? value.length : newline + 1;
+}
+
+function swapMarkdownRangeWithPrevious(
+  state: TextState,
+  previousStart: number,
+  previousEnd: number,
+  groupStart: number,
+  groupContentEnd: number,
+  groupEnd: number,
+): TextEditResult {
+  const previous = state.value.slice(previousStart, previousEnd);
+  const between = state.value.slice(previousEnd, groupStart);
+  const selected = state.value.slice(groupStart, groupContentEnd);
+  const after = state.value.slice(groupContentEnd, groupEnd);
+  const value = `${state.value.slice(0, previousStart)}${selected}${between}${previous}${after}${state.value.slice(groupEnd)}`;
+  return {
+    value,
+    selectionStart: state.selectionStart - previous.length - between.length,
+    selectionEnd: state.selectionEnd - previous.length - between.length,
+  };
+}
+
+function swapMarkdownRangeWithNext(
+  state: TextState,
+  groupStart: number,
+  groupContentEnd: number,
+  groupEnd: number,
+  nextContentEnd: number,
+  nextEnd: number,
+): TextEditResult {
+  const selected = state.value.slice(groupStart, groupContentEnd);
+  const between = state.value.slice(groupContentEnd, groupEnd);
+  const next = state.value.slice(groupEnd, nextContentEnd);
+  const after = state.value.slice(nextContentEnd, nextEnd);
+  const value = `${state.value.slice(0, groupStart)}${next}${between}${selected}${after}${state.value.slice(nextEnd)}`;
+  return {
+    value,
+    selectionStart: state.selectionStart + next.length + between.length,
+    selectionEnd: state.selectionEnd + next.length + between.length,
   };
 }
 
@@ -1490,20 +3187,25 @@ export function setParagraphText(state: TextState): TextEditResult {
 export function clearMarkdownFormatting(state: TextState): TextEditResult {
   const normalized = normalizeSelection(state);
   if (normalized.selectionStart !== normalized.selectionEnd) {
-    const selected = normalized.value.slice(normalized.selectionStart, normalized.selectionEnd);
-    const range = getLineRange(normalized.value, normalized.selectionStart, normalized.selectionEnd);
-    const coversLineRange = normalized.selectionStart === range.lineStart && normalized.selectionEnd === range.normalizedEnd;
-    const plain = selected.includes("\n") || coversLineRange
+    const structured = clearStructuredMarkdownSelection(normalized);
+    const selected = structured.value.slice(structured.selectionStart, structured.selectionEnd);
+    const range = getLineRange(structured.value, structured.selectionStart, structured.selectionEnd);
+    const coversLineRange = structured.selectionStart === range.lineStart && structured.selectionEnd === range.normalizedEnd;
+    const plainSource = selected.includes("\n") || coversLineRange
       ? selected
         .split("\n")
-        .map((line) => stripBlockFormatting(stripInlineFormatting(line)))
+        .map((line) => stripBlockFormatting(line))
         .join("\n")
-      : stripInlineFormatting(selected);
-    const value = `${normalized.value.slice(0, normalized.selectionStart)}${plain}${normalized.value.slice(normalized.selectionEnd)}`;
+      : selected;
+    const plain = restorePreferredLineBreaks(
+      stripInlineFormatting(plainSource),
+      selected,
+    );
+    const value = `${structured.value.slice(0, structured.selectionStart)}${plain}${structured.value.slice(structured.selectionEnd)}`;
     return {
       value,
-      selectionStart: normalized.selectionStart,
-      selectionEnd: normalized.selectionStart + plain.length,
+      selectionStart: structured.selectionStart,
+      selectionEnd: structured.selectionStart + plain.length,
     };
   }
 
@@ -1525,8 +3227,224 @@ export function clearMarkdownFormatting(state: TextState): TextEditResult {
   return { value, selectionStart: cursor, selectionEnd: cursor };
 }
 
-export function continueMarkdownList(state: TextState): TextEditResult | null {
-  const normalized = normalizeSelection(state);
+function clearStructuredMarkdownSelection(state: TextState): TextState {
+  let current = state;
+  for (let iteration = 0; iteration < 64; iteration += 1) {
+    const styleEdit = clearOneMarkdownInlineStyle(current);
+    if (styleEdit) {
+      current = styleEdit;
+      continue;
+    }
+    const linkEdit = clearOneMarkdownLink(current);
+    if (linkEdit) {
+      current = linkEdit;
+      continue;
+    }
+    break;
+  }
+  return current;
+}
+
+function clearOneMarkdownInlineStyle(state: TextState): TextState | null {
+  const parseSpans = collectMarkdownInlineStyleParseSpans(state.value);
+  const ranges = collectAllMarkdownInlineStyleRanges(state.value, parseSpans)
+    .filter((range) => rangesOverlap(
+      state.selectionStart,
+      state.selectionEnd,
+      range.contentStart,
+      range.contentEnd,
+    ))
+    .filter((range) => !(
+      state.selectionStart <= range.start
+      && state.selectionEnd >= range.end
+    ))
+    .sort((left, right) => (
+      (left.contentEnd - left.contentStart) - (right.contentEnd - right.contentStart)
+    ));
+
+  for (const range of ranges) {
+    const selectionStart = Math.max(state.selectionStart, range.contentStart);
+    const selectionEnd = Math.min(state.selectionEnd, range.contentEnd);
+    if (selectionStart >= selectionEnd) continue;
+    const definition: MarkdownInlineStyleDefinition = {
+      kind: range.kind,
+      preferred: { opening: range.opening, closing: range.closing },
+      aliases: [{ opening: range.opening, closing: range.closing }],
+    };
+    const result = removeMarkdownInlineStyleFromSelection(
+      {
+        value: state.value,
+        selectionStart,
+        selectionEnd,
+      },
+      definition,
+      range,
+      parseSpans,
+    );
+    if (result) {
+      return preserveSelectionAfterSubEdit(state, result, selectionStart, selectionEnd);
+    }
+  }
+  return null;
+}
+
+type ClearableMarkdownLink = NonNullable<ReturnType<typeof readMarkdownInlineLink>>;
+
+function clearOneMarkdownLink(state: TextState): TextState | null {
+  const links = collectClearableMarkdownLinks(state.value)
+    .filter((link) => rangesOverlap(
+      state.selectionStart,
+      state.selectionEnd,
+      link.labelStart,
+      link.labelEnd,
+    ))
+    .filter((link) => !(
+      state.selectionStart <= link.start
+      && state.selectionEnd >= link.end
+    ))
+    .sort((left, right) => (left.end - left.start) - (right.end - right.start));
+
+  for (const link of links) {
+    const selectionStart = Math.max(state.selectionStart, link.labelStart);
+    const selectionEnd = Math.min(state.selectionEnd, link.labelEnd);
+    if (selectionStart >= selectionEnd) continue;
+    const parsed = findMarkdownLinkAtCursor(
+      state.value,
+      selectionStart,
+      selectionEnd,
+      false,
+    );
+    if (!parsed || parsed.image || parsed.start !== link.start || parsed.end !== link.end) {
+      continue;
+    }
+
+    const prefix = state.value.slice(link.start, link.labelStart);
+    const suffix = state.value.slice(link.labelEnd, link.end);
+    const left = state.value.slice(link.labelStart, selectionStart);
+    const selected = state.value.slice(selectionStart, selectionEnd);
+    const right = state.value.slice(selectionEnd, link.labelEnd);
+    const leftLink = wrapMarkdownLinkLabel(left, prefix, suffix);
+    const rightLink = wrapMarkdownLinkLabel(right, prefix, suffix);
+    const replacement = `${leftLink}${selected}${rightLink}`;
+    const value = `${state.value.slice(0, link.start)}${replacement}${state.value.slice(link.end)}`;
+    const result = {
+      value,
+      selectionStart: link.start + leftLink.length,
+      selectionEnd: link.start + leftLink.length + selected.length,
+    };
+    return preserveSelectionAfterSubEdit(state, result, selectionStart, selectionEnd);
+  }
+  return null;
+}
+
+function collectClearableMarkdownLinks(value: string): ClearableMarkdownLink[] {
+  const links: ClearableMarkdownLink[] = [];
+  let cursor = 0;
+  while (cursor < value.length) {
+    const open = value.indexOf("[", cursor);
+    if (open < 0) break;
+    const link = readMarkdownInlineLink(value, open) ?? readMarkdownReferenceLink(value, open);
+    if (link) {
+      if (link.imageStart === null) links.push(link);
+      cursor = Math.max(open + 1, link.end);
+    } else {
+      cursor = open + 1;
+    }
+  }
+  return links;
+}
+
+function wrapMarkdownLinkLabel(content: string, prefix: string, suffix: string): string {
+  if (!content) return "";
+  const leading = content.match(/^[ \t\r\n]+/)?.[0] ?? "";
+  const trailing = content.slice(leading.length).match(/[ \t\r\n]+$/)?.[0] ?? "";
+  const core = content.slice(leading.length, content.length - trailing.length);
+  return core ? `${leading}${prefix}${core}${suffix}${trailing}` : content;
+}
+
+function preserveSelectionAfterSubEdit(
+  state: TextState,
+  result: TextEditResult,
+  editedSelectionStart: number,
+  editedSelectionEnd: number,
+): TextState {
+  const edit = findSingleTextReplacement(state.value, result.value);
+  const map = (offset: number) => mapOffsetAfterTextReplacement(
+    offset,
+    edit.start,
+    edit.end,
+    edit.replacementLength,
+  );
+  return {
+    value: result.value,
+    selectionStart: state.selectionStart === editedSelectionStart
+      ? result.selectionStart
+      : map(state.selectionStart),
+    selectionEnd: state.selectionEnd === editedSelectionEnd
+      ? result.selectionEnd
+      : map(state.selectionEnd),
+  };
+}
+
+function findSingleTextReplacement(
+  before: string,
+  after: string,
+): { start: number; end: number; replacementLength: number } {
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) {
+    start += 1;
+  }
+  let beforeEnd = before.length;
+  let afterEnd = after.length;
+  while (
+    beforeEnd > start
+    && afterEnd > start
+    && before[beforeEnd - 1] === after[afterEnd - 1]
+  ) {
+    beforeEnd -= 1;
+    afterEnd -= 1;
+  }
+  return {
+    start,
+    end: beforeEnd,
+    replacementLength: afterEnd - start,
+  };
+}
+
+interface CompactNestedBulletList {
+  indent: string;
+  marker: string;
+  taskMarker: string;
+  content: string;
+  depth: number;
+}
+
+function getCompactNestedBulletList(line: string): CompactNestedBulletList | null {
+  const indent = line.match(/^[ \t]*/)?.[0] ?? "";
+  const markers: string[] = [];
+  let cursor = indent.length;
+
+  while (cursor < line.length) {
+    const marker = line.slice(cursor).match(/^([-*+])[ \t]+/);
+    if (!marker) break;
+    markers.push(marker[1]);
+    cursor += marker[0].length;
+  }
+  if (markers.length < 2) return null;
+
+  const task = line.slice(cursor).match(/^(\[[ xX]\])[ \t]+/);
+  if (task) cursor += task[0].length;
+  return {
+    indent,
+    marker: markers.at(-1) ?? "*",
+    taskMarker: task ? "[ ] " : "",
+    content: line.slice(cursor),
+    depth: markers.length - 1,
+  };
+}
+
+export function continueMarkdownList(state: TextState, indentSize = 2): TextEditResult | null {
+  const normalized = normalizeEmptyMarkdownListCursor(state, "plain");
   if (normalized.selectionStart !== normalized.selectionEnd) return null;
   const lineBreak = getPreferredLineBreak(normalized.value);
 
@@ -1535,6 +3453,24 @@ export function continueMarkdownList(state: TextState): TextEditResult | null {
   const normalizedLineEnd = lineEnd === -1 ? normalized.value.length : lineEnd;
   const line = normalized.value.slice(lineStart, normalized.selectionStart);
   const afterCursor = normalized.value.slice(normalized.selectionStart, normalizedLineEnd);
+  const compact = getCompactNestedBulletList(line);
+  if (compact) {
+    const lines = normalized.value.split("\n");
+    const lineIndex = findLineIndex(lines, lineStart);
+    if (!isMarkdownListMarkerIndentAllowed(lines, lineIndex, "", compact.indent)) return null;
+    const normalizedIndentSize = indentSize === 4 ? 4 : 2;
+    const continuationIndent = compact.indent
+      + " ".repeat(normalizedIndentSize * compact.depth);
+    if (!compact.content.trim() && !afterCursor.trim()) {
+      const value = `${normalized.value.slice(0, lineStart)}${continuationIndent}${normalized.value.slice(normalized.selectionStart)}`;
+      const cursor = lineStart + continuationIndent.length;
+      return { value, selectionStart: cursor, selectionEnd: cursor };
+    }
+    return insertMarkdownAtSelection(
+      normalized,
+      `${lineBreak}${continuationIndent}${compact.marker} ${compact.taskMarker}`,
+    );
+  }
   const match = line.match(/^(\s*)([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?/);
   if (!match) return null;
   const lines = normalized.value.split("\n");
@@ -1543,40 +3479,21 @@ export function continueMarkdownList(state: TextState): TextEditResult | null {
 
   const content = line.slice(match[0].length);
   if (!content.trim() && !afterCursor.trim()) {
-    if (match[1]) {
-      const removed = getSingleIndentRemoval(match[1]);
-      const nextIndent = match[1].slice(removed);
-      const taskMarker = match[3] ? "[ ] " : "";
-      const replacement = `${nextIndent}${match[2]} ${taskMarker}`;
-      let value = `${normalized.value.slice(0, lineStart)}${replacement}${normalized.value.slice(normalized.selectionStart)}`;
-      let cursor = lineStart + replacement.length;
-      const number = match[2].match(/^(\d+)([.)])$/);
-      if (number) {
-        const lineIndex = findLineIndex(value.split("\n"), lineStart);
-        value = renumberOrderedListBlockAtLine(value, lineIndex);
-        const lines = value.split("\n");
-        const marker = lines[lineIndex]?.match(/^(\s*)(\d+[.)]\s+(?:\[[ xX]\]\s+)?)/);
-        if (marker) {
-          cursor = getLineStartOffset(lines, lineIndex) + marker[0].length;
-        }
-      }
-      return { value, selectionStart: cursor, selectionEnd: cursor };
-    }
-
-    let value = `${normalized.value.slice(0, lineStart)}${normalized.value.slice(normalized.selectionStart)}`;
+    let value = `${normalized.value.slice(0, lineStart)}${match[1]}${normalized.value.slice(normalized.selectionStart)}`;
     const number = match[2].match(/^(\d+)([.)])$/);
     if (number) {
       const startLine = findLineIndex(value.split("\n"), lineStart) + 1;
-      value = renumberOrderedListLines(value, startLine, match[1], Number(number[1]), number[2]);
+      value = renumberOrderedListLines(value, startLine, match[1], normalizeOrderedListNumber(number[1]), number[2]);
     }
-    return { value, selectionStart: lineStart, selectionEnd: lineStart };
+    const cursor = lineStart + match[1].length;
+    return { value, selectionStart: cursor, selectionEnd: cursor };
   }
 
   let marker = match[2];
   const number = marker.match(/^(\d+)([.)])$/);
   const taskMarker = match[3] ? "[ ] " : "";
   if (number) {
-    marker = `${Number(number[1]) + 1}${number[2]}`;
+    marker = `${incrementOrderedListNumber(normalizeOrderedListNumber(number[1]))}${number[2]}`;
     const insertion = `${lineBreak}${match[1]}${marker} ${taskMarker}`;
     const value = `${normalized.value.slice(0, normalized.selectionStart)}${insertion}${normalized.value.slice(normalized.selectionEnd)}`;
     const cursor = normalized.selectionStart + insertion.length;
@@ -1585,7 +3502,7 @@ export function continueMarkdownList(state: TextState): TextEditResult | null {
         value,
         findLineIndex(value.split("\n"), cursor) + 1,
         match[1],
-        Number(number[1]) + 2,
+        incrementOrderedListNumber(incrementOrderedListNumber(normalizeOrderedListNumber(number[1]))),
         number[2],
       ),
       selectionStart: cursor,
@@ -1596,22 +3513,40 @@ export function continueMarkdownList(state: TextState): TextEditResult | null {
   return insertMarkdownAtSelection(normalized, `${lineBreak}${match[1]}${marker} ${taskMarker}`);
 }
 
-export function continueMarkdownBlock(state: TextState): TextEditResult | null {
-  const normalized = normalizeSelection(state);
+export function continueMarkdownBlock(state: TextState, indentSize = 2): TextEditResult | null {
+  let normalized = normalizeSelection(state);
+  if (normalized.selectionStart !== normalized.selectionEnd) {
+    const spansLines = normalized.value.slice(normalized.selectionStart, normalized.selectionEnd).includes("\n");
+    const blocks = splitMarkdownBlocks(normalized.value);
+    const startBlock = blocks.find((block) => (
+      normalized.selectionStart >= block.start && normalized.selectionStart < block.end
+    ));
+    const endOffset = Math.max(normalized.selectionStart, normalized.selectionEnd - 1);
+    const endBlock = blocks.find((block) => endOffset >= block.start && endOffset < block.end);
+    if (!startBlock || startBlock !== endBlock) return null;
+    if (spansLines && !["list", "task", "quote"].includes(startBlock.type)) return null;
+
+    normalized = {
+      value: `${normalized.value.slice(0, normalized.selectionStart)}${normalized.value.slice(normalized.selectionEnd)}`,
+      selectionStart: normalized.selectionStart,
+      selectionEnd: normalized.selectionStart,
+    };
+  }
   const lineStart = normalized.value.lastIndexOf("\n", normalized.selectionStart - 1) + 1;
-  if (normalized.selectionStart === normalized.selectionEnd && isInsideMarkdownRawBlock(normalized.value, lineStart)) {
+  if (isInsideMarkdownRawBlock(normalized.value, lineStart)) {
     return null;
   }
 
+  const rawFence = completeMarkdownRawFenceAtCursor(normalized);
+  if (rawFence.matched) return rawFence.edit;
+
   return (
-    continueMarkdownQuotedList(normalized)
-    ?? continueMarkdownList(normalized)
+    completeMarkdownFrontMatter(normalized)
+    ?? continueMarkdownQuotedList(normalized, indentSize)
+    ?? continueMarkdownList(normalized, indentSize)
     ?? continueMarkdownListContinuation(normalized)
     ?? continueMarkdownDefinitionList(normalized)
     ?? continueMarkdownFootnoteDefinition(normalized)
-    ?? continueMarkdownMathFence(normalized)
-    ?? continueMarkdownBracketMathFence(normalized)
-    ?? continueMarkdownCodeFence(normalized)
     ?? continueEmptyHeading(normalized)
     ?? completeMarkdownTableShortcut(normalized)
     ?? continueMarkdownTableRow(normalized)
@@ -1620,7 +3555,133 @@ export function continueMarkdownBlock(state: TextState): TextEditResult | null {
   );
 }
 
-export function applyMarkdownSpaceShortcut(state: TextState): TextEditResult | null {
+function completeMarkdownFrontMatter(state: TextState): TextEditResult | null {
+  const normalized = normalizeSelection(state);
+  if (normalized.selectionStart !== normalized.selectionEnd) return null;
+  const bomLength = normalized.value.startsWith("\uFEFF") ? 1 : 0;
+  if (normalized.selectionStart !== bomLength + 3) return null;
+  if (normalized.value.slice(bomLength, normalized.selectionStart) !== "---") return null;
+
+  const lineBreak = getPreferredLineBreak(normalized.value);
+  const suffix = normalized.value.slice(normalized.selectionStart);
+  if (suffix && !suffix.startsWith("\n") && !suffix.startsWith("\r\n")) return null;
+  const value = `${normalized.value.slice(0, normalized.selectionStart)}${lineBreak}${lineBreak}---${suffix}`;
+  const cursor = normalized.selectionStart + lineBreak.length;
+  return { value, selectionStart: cursor, selectionEnd: cursor };
+}
+
+export function editMarkdownFrontMatterOnEnter(
+  state: TextState,
+  modifiers: MarkdownEnterModifiers = {},
+): TextEditResult | null {
+  const normalized = normalizeSelection(state);
+  const frontMatter = findMarkdownFrontMatterRange(normalized.value);
+  if (!frontMatter) return null;
+
+  const lineBreak = getPreferredLineBreak(normalized.value);
+  const logicalContentEnd = frontMatter.contentEnd - lineBreak.length;
+  if (
+    logicalContentEnd < frontMatter.contentStart
+    || normalized.selectionStart < frontMatter.contentStart
+    || normalized.selectionEnd > logicalContentEnd
+  ) {
+    return null;
+  }
+
+  const hasSelection = normalized.selectionStart !== normalized.selectionEnd;
+  const canExit = !modifiers.primary && !modifiers.shift && !modifiers.alt;
+  const hasTrailingEmptyLine = normalized.value
+    .slice(frontMatter.contentStart, frontMatter.contentEnd)
+    .endsWith(`${lineBreak}${lineBreak}`);
+  if (
+    !hasSelection
+    && canExit
+    && normalized.selectionStart === logicalContentEnd
+    && hasTrailingEmptyLine
+  ) {
+    if (frontMatter.closingEnd > frontMatter.closingContentEnd) {
+      const afterClosingBreak = normalized.value.slice(frontMatter.closingEnd);
+      if (!afterClosingBreak || afterClosingBreak.startsWith(lineBreak)) {
+        return {
+          value: normalized.value,
+          selectionStart: frontMatter.closingEnd,
+          selectionEnd: frontMatter.closingEnd,
+        };
+      }
+      const value = `${normalized.value.slice(0, frontMatter.closingEnd)}${lineBreak}${afterClosingBreak}`;
+      return { value, selectionStart: frontMatter.closingEnd, selectionEnd: frontMatter.closingEnd };
+    }
+
+    const value = `${normalized.value.slice(0, frontMatter.closingContentEnd)}${lineBreak}${normalized.value.slice(frontMatter.closingContentEnd)}`;
+    const cursor = frontMatter.closingContentEnd + lineBreak.length;
+    return { value, selectionStart: cursor, selectionEnd: cursor };
+  }
+
+  return insertMarkdownAtSelection(normalized, lineBreak);
+}
+
+export function splitMarkdownParagraphOnEnter(state: TextState): TextEditResult | null {
+  const normalized = normalizeSelection(state);
+  const lineStart = normalized.value.lastIndexOf("\n", normalized.selectionStart - 1) + 1;
+  if (isInsideMarkdownRawBlock(normalized.value, lineStart)) return null;
+  const blocks = splitMarkdownBlocks(normalized.value);
+  const startBlock = blocks.find((block) => (
+    normalized.selectionStart >= block.start
+    && normalized.selectionStart <= block.end
+  ));
+  const endBlock = blocks.find((block) => (
+    normalized.selectionEnd >= block.start
+    && normalized.selectionEnd <= block.end
+  ));
+  if (!startBlock || startBlock !== endBlock) return null;
+  if (["heading", "quote"].includes(startBlock.type)) {
+    const heading = splitMarkdownHeadingPatternOnEnter(normalized);
+    if (heading) return heading;
+  }
+  if (startBlock.type !== "paragraph") {
+    return null;
+  }
+
+  const lineEnd = normalized.value.indexOf("\n", normalized.selectionStart);
+  const normalizedLineEnd = lineEnd < 0 ? normalized.value.length : lineEnd;
+  const line = normalized.value.slice(lineStart, normalizedLineEnd);
+  if (/^\s{0,3}(?:>|[-+*]\s|\d+[.)]\s|\[[^\]]+]:|\[\^[^\]]+]:)/.test(line)) return null;
+
+  const lineBreak = getPreferredLineBreak(normalized.value);
+  return insertMarkdownAtSelection(normalized, `${lineBreak}${lineBreak}`);
+}
+
+export function splitMarkdownContainerParagraphOnPrimaryEnter(
+  state: TextState,
+): TextEditResult | null {
+  const normalized = normalizeSelection(state);
+  if (normalized.value.slice(normalized.selectionStart, normalized.selectionEnd).includes("\n")) {
+    return null;
+  }
+
+  const lineStart = normalized.value.lastIndexOf("\n", normalized.selectionStart - 1) + 1;
+  if (isInsideMarkdownRawBlock(normalized.value, lineStart)) return null;
+
+  const pattern = getMarkdownContainerParagraphPattern(normalized);
+  if (
+    !pattern
+    || normalized.selectionStart < pattern.contentStart
+    || normalized.selectionEnd > pattern.contentEnd
+  ) {
+    return null;
+  }
+
+  const insertion = `${pattern.separator}${pattern.continuation}`;
+  const value = [
+    normalized.value.slice(0, normalized.selectionStart),
+    insertion,
+    normalized.value.slice(normalized.selectionEnd),
+  ].join("");
+  const cursor = normalized.selectionStart + insertion.length;
+  return { value, selectionStart: cursor, selectionEnd: cursor };
+}
+
+export function applyMarkdownSpaceShortcut(state: TextState, indentSize = 2): TextEditResult | null {
   const normalized = normalizeSelection(state);
   if (normalized.selectionStart !== normalized.selectionEnd) return null;
 
@@ -1634,7 +3695,14 @@ export function applyMarkdownSpaceShortcut(state: TextState): TextEditResult | n
   const lineBreak = getPreferredLineBreak(normalized.value);
   const lines = normalized.value.split("\n");
   const lineIndex = findLineIndex(lines, lineStart);
-  const quotedShortcut = getQuotedMarkdownSpaceShortcut(beforeCursor, afterCursor, lineBreak, lines, lineIndex);
+  const quotedShortcut = getQuotedMarkdownSpaceShortcut(
+    beforeCursor,
+    afterCursor,
+    lineBreak,
+    lines,
+    lineIndex,
+    indentSize,
+  );
   if (quotedShortcut) {
     const value = `${normalized.value.slice(0, lineStart)}${quotedShortcut}${normalized.value.slice(normalized.selectionStart)}`;
     const cursor = lineStart + quotedShortcut.length;
@@ -1643,6 +3711,19 @@ export function applyMarkdownSpaceShortcut(state: TextState): TextEditResult | n
 
   const indent = beforeCursor.match(/^\s*/)?.[0] ?? "";
   const marker = beforeCursor.slice(indent.length);
+  const nestedBulletShortcut = getNestedBulletSpaceShortcut(
+    beforeCursor,
+    afterCursor,
+    lines,
+    lineIndex,
+    "",
+    indentSize,
+  );
+  if (nestedBulletShortcut) {
+    const value = `${normalized.value.slice(0, lineStart)}${nestedBulletShortcut}${normalized.value.slice(normalized.selectionStart)}`;
+    const cursor = lineStart + nestedBulletShortcut.length;
+    return { value, selectionStart: cursor, selectionEnd: cursor };
+  }
   const replacement = normalizeGeneratedLineBreaks(getMarkdownSpaceShortcutReplacement(marker), lineBreak);
 
   if (!replacement) return null;
@@ -1655,12 +3736,57 @@ export function applyMarkdownSpaceShortcut(state: TextState): TextEditResult | n
   return { value, selectionStart: cursor, selectionEnd: cursor };
 }
 
+export function applyMarkdownTextInputShortcut(
+  state: TextState,
+  text: string,
+  indentSize = 2,
+): TextEditResult | null {
+  let current = state;
+  let segmentStart = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] !== " ") continue;
+    const beforeSpace = text.slice(segmentStart, index);
+    const stateBeforeSpace = beforeSpace
+      ? insertMarkdownAtSelection(current, beforeSpace)
+      : current;
+    const shortcut = applyMarkdownSpaceShortcut(stateBeforeSpace, indentSize);
+    if (shortcut) {
+      const remaining = text.slice(index + 1);
+      return remaining
+        ? insertMarkdownAtSelection(shortcut, remaining)
+        : shortcut;
+    }
+    current = insertMarkdownAtSelection(stateBeforeSpace, " ");
+    segmentStart = index + 1;
+  }
+  return null;
+}
+
+export function applyMarkdownSpaceShortcutAfterInput(
+  state: TextState,
+  indentSize = 2,
+): TextEditResult | null {
+  const normalized = normalizeSelection(state);
+  if (
+    normalized.selectionStart !== normalized.selectionEnd
+    || normalized.selectionStart === 0
+    || normalized.value[normalized.selectionStart - 1] !== " "
+  ) return null;
+  const cursor = normalized.selectionStart - 1;
+  return applyMarkdownSpaceShortcut({
+    value: normalized.value.slice(0, cursor) + normalized.value.slice(cursor + 1),
+    selectionStart: cursor,
+    selectionEnd: cursor,
+  }, indentSize);
+}
+
 function getQuotedMarkdownSpaceShortcut(
   beforeCursor: string,
   afterCursor: string,
   lineBreak: "\n" | "\r\n",
   lines: string[],
   lineIndex: number,
+  indentSize: number,
 ): string {
   const quote = parseQuotePrefix(beforeCursor);
   if (!quote) return "";
@@ -1670,6 +3796,15 @@ function getQuotedMarkdownSpaceShortcut(
   }
   const indent = content.match(/^\s*/)?.[0] ?? "";
   const marker = content.slice(indent.length);
+  const nestedBulletShortcut = getNestedBulletSpaceShortcut(
+    content,
+    afterCursor,
+    lines,
+    lineIndex,
+    quote.normalized,
+    indentSize,
+  );
+  if (nestedBulletShortcut) return nestedBulletShortcut;
   const replacement = normalizeGeneratedLineBreaks(getMarkdownSpaceShortcutReplacement(marker), lineBreak);
   if (isMarkdownListSpaceShortcutMarker(marker) && !isMarkdownListMarkerIndentAllowed(lines, lineIndex, quote.normalized, indent)) {
     return "";
@@ -1678,11 +3813,40 @@ function getQuotedMarkdownSpaceShortcut(
   return replacement ? `${quote.normalized}${indent}${replacement}` : "";
 }
 
+function getNestedBulletSpaceShortcut(
+  beforeCursor: string,
+  afterCursor: string,
+  lines: string[],
+  lineIndex: number,
+  quotePrefix: string,
+  indentSize: number,
+): string {
+  if (afterCursor.trim() || lineIndex <= 0) return "";
+  const shortcut = beforeCursor.match(/^([ \t]*)([-+*])[ \t]+([-+*])$/);
+  if (!shortcut) return "";
+
+  const previous = getListContinuationLineContext(lines[lineIndex - 1] ?? "");
+  if (previous.quotePrefix !== quotePrefix) return "";
+  const previousBody = splitCarriageReturnEnding(previous.content).body;
+  const previousList = previousBody.match(/^([ \t]*)([-+*])[ \t]+(?:\[[ xX]\][ \t]+)?(.+)$/);
+  if (
+    !previousList
+    || getIndentWidth(previousList[1]) !== getIndentWidth(shortcut[1])
+    || !previousList[3].trim()
+  ) return "";
+
+  const normalizedIndentSize = indentSize === 4 ? 4 : 2;
+  return `${quotePrefix}${shortcut[1]}${" ".repeat(normalizedIndentSize)}${shortcut[3]} `;
+}
+
 function getMarkdownSpaceShortcutReplacement(marker: string): string {
   if (/^#{1,6}$/.test(marker)) {
     return `${marker} `;
   }
-  if (marker === "-" || marker === "*" || marker === "+") {
+  if (marker === "*") {
+    return "* ";
+  }
+  if (marker === "-" || marker === "+") {
     return "- ";
   }
   if (/^\d+[.)]$/.test(marker)) {
@@ -1691,7 +3855,7 @@ function getMarkdownSpaceShortcutReplacement(marker: string): string {
   if (marker === ">") {
     return "> ";
   }
-  if (/^(---|\*\*\*|___)$/.test(marker)) {
+  if (/^(---|\+\+\+|\*\*\*|___)$/.test(marker)) {
     return `${marker}\n`;
   }
   if (/^\[[ xX]?]$/.test(marker)) {
@@ -1876,6 +4040,8 @@ export function applyAutoPair(state: TextState, key: string): TextEditResult | n
     return wrapMarkdownSelection(normalized, key, selectedOnlyPairs[key]);
   }
 
+  if (key === "$" && !selected) return null;
+
   const close = pairs[key];
   if (!close) return null;
   if (key === "`" && !selected && normalized.value[normalized.selectionStart - 1] === "`") return null;
@@ -1924,7 +4090,7 @@ function getSelectedOnlyAutoPairs(): Record<string, string> {
   };
 }
 
-export function outdentMarkdownListOnBackspace(state: TextState): TextEditResult | null {
+export function outdentMarkdownListOnBackspace(state: TextState, indentSize = 2): TextEditResult | null {
   const normalized = normalizeSelection(state);
   if (normalized.selectionStart !== normalized.selectionEnd || normalized.selectionStart <= 0) return null;
 
@@ -1932,7 +4098,7 @@ export function outdentMarkdownListOnBackspace(state: TextState): TextEditResult
   if (isInsideMarkdownRawBlock(normalized.value, range.lineStart)) return null;
 
   const line = range.value.slice(range.lineStart, range.normalizedEnd);
-  const quotedResult = outdentQuotedMarkdownListOnBackspace(normalized, range, line);
+  const quotedResult = outdentQuotedMarkdownListOnBackspace(normalized, range, line, indentSize);
   if (quotedResult) return quotedResult;
 
   const match = line.match(/^(\s*)([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?/);
@@ -1949,12 +4115,12 @@ export function outdentMarkdownListOnBackspace(state: TextState): TextEditResult
     const number = match[2].match(/^(\d+)([.)])$/);
     if (number) {
       const startLine = findLineIndex(value.split("\n"), range.lineStart) + 1;
-      value = renumberOrderedListLines(value, startLine, match[1], Number(number[1]), number[2]);
+      value = renumberOrderedListLines(value, startLine, match[1], normalizeOrderedListNumber(number[1]), number[2]);
     }
     return { value, selectionStart: range.lineStart, selectionEnd: range.lineStart };
   }
 
-  const removed = match[1].startsWith("\t") ? 1 : Math.min(2, match[1].length);
+  const removed = getSingleIndentRemoval(match[1], indentSize);
   let value = `${range.value.slice(0, range.lineStart)}${line.slice(removed)}${range.value.slice(range.normalizedEnd)}`;
   let cursor = normalized.selectionStart - removed;
   const number = match[2].match(/^(\d+)([.)])$/);
@@ -1975,6 +4141,7 @@ function outdentQuotedMarkdownListOnBackspace(
   state: TextState,
   range: LineRange,
   line: string,
+  indentSize: number,
 ): TextEditResult | null {
   const quoted = matchQuotedList(line);
   if (!quoted) return null;
@@ -1986,7 +4153,7 @@ function outdentQuotedMarkdownListOnBackspace(
   if (state.selectionStart !== contentStart) return null;
 
   if (quoted.listIndent) {
-    const removed = getSingleIndentRemoval(quoted.listIndent);
+    const removed = getSingleIndentRemoval(quoted.listIndent, indentSize);
     const nextLine = `${quoted.quotePrefix}${line.slice(quoted.rawQuoteLength + removed)}`;
     let value = `${range.value.slice(0, range.lineStart)}${nextLine}${range.value.slice(range.normalizedEnd)}`;
     let cursor = range.lineStart + `${quoted.quotePrefix}${line.slice(quoted.rawQuoteLength + removed, quoted.markerEnd)}`.length;
@@ -2007,7 +4174,7 @@ function outdentQuotedMarkdownListOnBackspace(
   const number = quoted.marker.match(/^(\d+)([.)])$/);
   if (number) {
     const startLine = findLineIndex(value.split("\n"), range.lineStart) + 1;
-    value = renumberQuotedOrderedListLines(value, startLine, quoted.quotePrefix, quoted.listIndent, Number(number[1]), number[2]);
+    value = renumberQuotedOrderedListLines(value, startLine, quoted.quotePrefix, quoted.listIndent, normalizeOrderedListNumber(number[1]), number[2]);
   }
 
   const cursor = range.lineStart + quoted.quotePrefix.length;
@@ -2016,39 +4183,37 @@ function outdentQuotedMarkdownListOnBackspace(
 
 export function unwrapMarkdownBlockOnBackspace(state: TextState): TextEditResult | null {
   const normalized = normalizeSelection(state);
-  if (normalized.selectionStart !== normalized.selectionEnd || normalized.selectionStart <= 0) return null;
+  if (normalized.selectionStart !== normalized.selectionEnd) return null;
+
+  const frontMatter = unwrapMarkdownFrontMatterOnBackspace(normalized);
+  if (frontMatter) return frontMatter;
 
   const range = getLineRange(normalized.value, normalized.selectionStart, normalized.selectionEnd);
   if (isInsideMarkdownRawBlock(normalized.value, range.lineStart)) return null;
 
   const line = range.value.slice(range.lineStart, range.normalizedEnd);
-  const quotedHeading = matchQuotedHeading(line);
-  if (quotedHeading) {
-    const contentStart = range.lineStart + quotedHeading.markerEnd;
-    if (normalized.selectionStart !== contentStart) return null;
-
-    const replacement = `${quotedHeading.quotePrefix}${quotedHeading.contentIndent}${line.slice(quotedHeading.markerEnd)}`;
-    const value = `${range.value.slice(0, range.lineStart)}${replacement}${range.value.slice(range.normalizedEnd)}`;
-    const cursor = range.lineStart + quotedHeading.quotePrefix.length + quotedHeading.contentIndent.length;
+  const heading = getMarkdownAtxHeadingPattern(range.value, normalized.selectionStart);
+  if (heading && normalized.selectionStart === heading.contentStart) {
+    const content = range.value.slice(heading.contentStart, heading.contentEnd);
+    const replacement = `${heading.plainPrefix}${content}`;
+    const value = `${range.value.slice(0, heading.lineStart)}${replacement}${range.value.slice(heading.lineEnd)}`;
+    const cursor = heading.lineStart + heading.plainPrefix.length;
     return { value, selectionStart: cursor, selectionEnd: cursor };
   }
 
-  const heading = line.match(/^(\s{0,3})(#{1,6}\s+)/);
-  if (heading) {
-    const contentStart = range.lineStart + heading[0].length;
-    if (normalized.selectionStart !== contentStart) return null;
-
-    const replacement = `${heading[1]}${line.slice(heading[0].length)}`;
-    const value = `${range.value.slice(0, range.lineStart)}${replacement}${range.value.slice(range.normalizedEnd)}`;
-    const cursor = range.lineStart + heading[1].length;
+  const setext = getMarkdownSetextHeadingPattern(range.value, normalized.selectionStart);
+  const legacySetext = findSetextHeadingRange(range.value, range.lineStart, range.normalizedEnd);
+  if (
+    setext
+    && (
+      normalized.selectionStart === setext.contentStart
+      || normalized.selectionStart === legacySetext?.underlineStart
+    )
+  ) {
+    const titleEnd = setext.contentEnd + setext.titleSuffix.length;
+    const value = `${range.value.slice(0, titleEnd)}${sliceAfterRemovedLinePreservingBreak(range.value, setext.headingEnd)}`;
+    const cursor = normalized.selectionStart === setext.contentStart ? setext.contentStart : titleEnd;
     return { value, selectionStart: cursor, selectionEnd: cursor };
-  }
-
-  const setext = findSetextHeadingRange(range.value, range.lineStart, range.normalizedEnd);
-  if (setext && normalized.selectionStart === setext.underlineStart) {
-    const headingEnd = trimCarriageReturnBeforeLineBreak(range.value, setext.headingEnd);
-    const value = `${range.value.slice(0, headingEnd)}${sliceAfterRemovedLinePreservingBreak(range.value, setext.underlineEnd)}`;
-    return { value, selectionStart: headingEnd, selectionEnd: headingEnd };
   }
 
   const definitionMarker = matchDefinitionListMarkerLine(line);
@@ -2143,18 +4308,278 @@ export function insertMarkdownTableTemplate(state: TextState): TextEditResult {
   };
 }
 
-export function insertMarkdownCalloutTemplate(state: TextState): TextEditResult {
+export function insertMarkdownCalloutTemplate(state: TextState, kind?: string): TextEditResult {
   const normalized = normalizeSelection(state);
-  const lineBreak = getPreferredLineBreak(normalized.value);
-  const normalizedTemplate = normalizeGeneratedLineBreaks(calloutTemplate, lineBreak);
-  const value = `${normalized.value.slice(0, normalized.selectionStart)}${normalizedTemplate}${normalized.value.slice(normalized.selectionEnd)}`;
-  const placeholderOffset = normalizedTemplate.indexOf(calloutPlaceholder);
-  const selectionStart = normalized.selectionStart + (placeholderOffset >= 0 ? placeholderOffset : normalizedTemplate.length);
+  const calloutKind = normalizeMarkdownCalloutKind(kind);
+  const chunks = collectLineChunks(normalized.value);
+  const selectedLines = getSelectedLineIndexes(
+    chunks,
+    normalized.selectionStart,
+    normalized.selectionEnd,
+  );
+  const existing = findMarkdownCalloutBlock(chunks, selectedLines.start, selectedLines.end);
+
+  if (existing) {
+    return existing.kind === calloutKind
+      ? unwrapMarkdownCallout(normalized, chunks, existing)
+      : replaceMarkdownCalloutKind(normalized, chunks, existing, calloutKind);
+  }
+
+  return wrapMarkdownLinesAsCallout(normalized, chunks, selectedLines, calloutKind);
+}
+
+function createMarkdownCalloutTemplate(kind: MarkdownCalloutKind): string {
+  return `\n> [!${kind}]\n> \n`;
+}
+
+function normalizeMarkdownCalloutKind(kind?: string): MarkdownCalloutKind {
+  const normalized = kind?.trim().toUpperCase() as MarkdownCalloutKind | undefined;
+  return normalized && markdownCalloutKinds.has(normalized) ? normalized : "NOTE";
+}
+
+interface MarkdownCalloutHeader {
+  kind: MarkdownCalloutKind;
+  kindStart: number;
+  kindEnd: number;
+  quoteDepth: number;
+  quotePrefix: string;
+}
+
+interface MarkdownCalloutBlock extends MarkdownCalloutHeader {
+  headerIndex: number;
+  endIndex: number;
+}
+
+interface TextRemoval {
+  start: number;
+  end: number;
+}
+
+interface TextInsertion {
+  offset: number;
+  text: string;
+  priority: number;
+}
+
+function findMarkdownCalloutBlock(
+  chunks: string[],
+  selectionStartLine: number,
+  selectionEndLine: number,
+): MarkdownCalloutBlock | null {
+  for (let headerIndex = selectionStartLine; headerIndex >= 0; headerIndex -= 1) {
+    const header = parseMarkdownCalloutHeader(chunks[headerIndex] ?? "");
+    if (!header) continue;
+    const endIndex = findMarkdownCalloutEnd(chunks, headerIndex, header.quoteDepth);
+    if (selectionStartLine >= headerIndex && selectionEndLine <= endIndex) {
+      return { ...header, headerIndex, endIndex };
+    }
+  }
+  return null;
+}
+
+function parseMarkdownCalloutHeader(chunk: string): MarkdownCalloutHeader | null {
+  const body = stripLineBreak(chunk);
+  const quote = parseQuotePrefix(body);
+  if (!quote) return null;
+  const content = body.slice(quote.rawLength);
+  const match = content.match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*$/i);
+  if (!match || match.index === undefined) return null;
+  const markerStart = quote.rawLength + match.index;
+  const kindStart = markerStart + match[0].indexOf(match[1]);
+  return {
+    kind: match[1].toUpperCase() as MarkdownCalloutKind,
+    kindStart,
+    kindEnd: kindStart + match[1].length,
+    quoteDepth: countMarkdownQuoteDepth(body),
+    quotePrefix: body.slice(0, quote.rawLength),
+  };
+}
+
+function findMarkdownCalloutEnd(chunks: string[], headerIndex: number, quoteDepth: number): number {
+  let endIndex = headerIndex;
+  for (let index = headerIndex + 1; index < chunks.length; index += 1) {
+    const body = stripLineBreak(chunks[index] ?? "");
+    if (countMarkdownQuoteDepth(body) < quoteDepth) break;
+    const nextHeader = parseMarkdownCalloutHeader(chunks[index] ?? "");
+    if (nextHeader && nextHeader.quoteDepth === quoteDepth) break;
+    endIndex = index;
+  }
+  return endIndex;
+}
+
+function replaceMarkdownCalloutKind(
+  state: TextState,
+  chunks: string[],
+  block: MarkdownCalloutBlock,
+  kind: MarkdownCalloutKind,
+): TextEditResult {
+  const headerStart = getChunkStartOffset(chunks, block.headerIndex);
+  const kindStart = headerStart + block.kindStart;
+  const kindEnd = headerStart + block.kindEnd;
+  const value = `${state.value.slice(0, kindStart)}${kind}${state.value.slice(kindEnd)}`;
   return {
     value,
-    selectionStart,
-    selectionEnd: selectionStart + (placeholderOffset >= 0 ? calloutPlaceholder.length : 0),
+    selectionStart: mapOffsetAfterTextReplacement(state.selectionStart, kindStart, kindEnd, kind.length),
+    selectionEnd: mapOffsetAfterTextReplacement(state.selectionEnd, kindStart, kindEnd, kind.length),
   };
+}
+
+function unwrapMarkdownCallout(
+  state: TextState,
+  chunks: string[],
+  block: MarkdownCalloutBlock,
+): TextEditResult {
+  const removals: TextRemoval[] = [];
+  const headerStart = getChunkStartOffset(chunks, block.headerIndex);
+  removals.push({ start: headerStart, end: getChunkEndOffset(chunks, block.headerIndex) });
+
+  for (let index = block.headerIndex + 1; index <= block.endIndex; index += 1) {
+    const chunkStart = getChunkStartOffset(chunks, index);
+    const quoteMarker = getMarkdownQuoteMarkerRange(stripLineBreak(chunks[index] ?? ""), block.quoteDepth);
+    if (quoteMarker) {
+      removals.push({
+        start: chunkStart + quoteMarker.start,
+        end: chunkStart + quoteMarker.end,
+      });
+    }
+  }
+
+  return applyTextRemovals(state, removals);
+}
+
+function wrapMarkdownLinesAsCallout(
+  state: TextState,
+  chunks: string[],
+  selectedLines: { start: number; end: number },
+  kind: MarkdownCalloutKind,
+): TextEditResult {
+  const selectedBodies = chunks
+    .slice(selectedLines.start, selectedLines.end + 1)
+    .map(stripLineBreak);
+  const nonBlankBodies = selectedBodies.filter((line) => line.trim());
+  const allQuoted = nonBlankBodies.length > 0
+    && nonBlankBodies.every((line) => Boolean(parseQuotePrefix(line)));
+  const firstBody = selectedBodies[0] ?? "";
+  const firstQuotedBody = allQuoted
+    ? nonBlankBodies.find((line) => Boolean(parseQuotePrefix(line))) ?? ""
+    : "";
+  const firstQuote = firstQuotedBody ? parseQuotePrefix(firstQuotedBody) : null;
+  const leading = firstBody.match(/^[ \t]*/)?.[0] ?? "";
+  const headerPrefix = firstQuote
+    ? firstQuotedBody.slice(0, firstQuote.rawLength)
+    : `${leading}> `;
+  const lineBreak = getPreferredLineBreak(state.value);
+  const rangeStart = getChunkStartOffset(chunks, selectedLines.start);
+  const insertions: TextInsertion[] = [{
+    offset: rangeStart,
+    text: `${headerPrefix}[!${kind}]${lineBreak}`,
+    priority: 0,
+  }];
+
+  if (allQuoted) {
+    for (let index = selectedLines.start; index <= selectedLines.end; index += 1) {
+      const body = stripLineBreak(chunks[index] ?? "");
+      if (!body.trim()) {
+        insertions.push({
+          offset: getChunkStartOffset(chunks, index),
+          text: headerPrefix.trimEnd(),
+          priority: 1,
+        });
+      }
+    }
+  } else {
+    for (let index = selectedLines.start; index <= selectedLines.end; index += 1) {
+      const body = stripLineBreak(chunks[index] ?? "");
+      const indent = body.match(/^[ \t]*/)?.[0] ?? "";
+      insertions.push({
+        offset: getChunkStartOffset(chunks, index) + indent.length,
+        text: "> ",
+        priority: 1,
+      });
+    }
+  }
+
+  return applyTextInsertions(state, insertions);
+}
+
+function countMarkdownQuoteDepth(line: string): number {
+  const quote = parseQuotePrefix(line);
+  return quote ? (quote.normalized.match(/>/g) ?? []).length : 0;
+}
+
+function getMarkdownQuoteMarkerRange(
+  line: string,
+  depth: number,
+): { start: number; end: number } | null {
+  let cursor = line.match(/^[ \t]*/)?.[0].length ?? 0;
+  for (let currentDepth = 1; currentDepth <= depth; currentDepth += 1) {
+    if (line[cursor] !== ">") return null;
+    const start = cursor;
+    cursor += 1;
+    if (line[cursor] === " " || line[cursor] === "\t") cursor += 1;
+    if (currentDepth === depth) return { start, end: cursor };
+  }
+  return null;
+}
+
+function applyTextRemovals(state: TextState, removals: TextRemoval[]): TextEditResult {
+  const ordered = [...removals].sort((left, right) => left.start - right.start);
+  let cursor = 0;
+  let value = "";
+  for (const removal of ordered) {
+    value += state.value.slice(cursor, removal.start);
+    cursor = removal.end;
+  }
+  value += state.value.slice(cursor);
+  return {
+    value,
+    selectionStart: mapOffsetAfterTextRemovals(state.selectionStart, ordered),
+    selectionEnd: mapOffsetAfterTextRemovals(state.selectionEnd, ordered),
+  };
+}
+
+function mapOffsetAfterTextRemovals(offset: number, removals: TextRemoval[]): number {
+  let removed = 0;
+  for (const removal of removals) {
+    if (offset <= removal.start) break;
+    if (offset < removal.end) return removal.start - removed;
+    removed += removal.end - removal.start;
+  }
+  return offset - removed;
+}
+
+function applyTextInsertions(state: TextState, insertions: TextInsertion[]): TextEditResult {
+  const ordered = [...insertions].sort(
+    (left, right) => left.offset - right.offset || left.priority - right.priority,
+  );
+  let value = state.value;
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const insertion = ordered[index];
+    value = `${value.slice(0, insertion.offset)}${insertion.text}${value.slice(insertion.offset)}`;
+  }
+  return {
+    value,
+    selectionStart: mapOffsetAfterTextInsertions(state.selectionStart, ordered),
+    selectionEnd: mapOffsetAfterTextInsertions(state.selectionEnd, ordered),
+  };
+}
+
+function mapOffsetAfterTextInsertions(offset: number, insertions: TextInsertion[]): number {
+  return offset + insertions.reduce(
+    (added, insertion) => added + (insertion.offset <= offset ? insertion.text.length : 0),
+    0,
+  );
+}
+
+function mapOffsetAfterTextReplacement(
+  offset: number,
+  start: number,
+  end: number,
+  replacementLength: number,
+): number {
+  if (offset <= start) return offset;
+  if (offset >= end) return offset + replacementLength - (end - start);
+  return start + Math.min(offset - start, replacementLength);
 }
 
 export function insertMarkdownHorizontalRule(state: TextState): TextEditResult {
@@ -2211,7 +4636,7 @@ function insertStandaloneMarkdownBlock(state: TextState, block: string): TextEdi
 
 function getNextFootnoteId(value: string): number {
   const used = new Set<number>();
-  const pattern = /\[\^([^\]\s]+)](?::)?/g;
+  const pattern = /\[\^([^\]\r\n]*[^\]\s\r\n][^\]\r\n]*)](?::)?/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(value))) {
     const numeric = Number(match[1]);
@@ -2235,6 +4660,7 @@ function getFootnoteAppendBreak(value: string, lineBreak: "\n" | "\r\n"): string
 export function insertMarkdownTableRow(
   state: TextState,
   position: MarkdownTableRowPosition,
+  content = "内容",
 ): TextEditResult {
   const normalized = normalizeSelection(state);
   const table = findTableRangeForSelection(normalized.value, normalized.selectionStart, normalized.selectionEnd);
@@ -2255,7 +4681,7 @@ export function insertMarkdownTableRow(
     normalized.value,
     lines,
     insertAt,
-    `${table.prefix}${buildTableRow(Array.from({ length: columns }, () => "内容"), table.rowFormat)}`,
+    `${table.prefix}${buildTableRow(Array.from({ length: columns }, () => content), table.rowFormat)}`,
   );
   const value = lines.join("\n");
   const cellRange = getTableCellContentRange(lines[insertAt] ?? "", columnIndex, getLineStartOffset(lines, insertAt), table.rowFormat);
@@ -2691,80 +5117,20 @@ function parseMarkdownImageDestination(
 ): MarkdownImageMatch | null {
   if (link.imageStart === null) return null;
   const body = line.slice(link.labelEnd + 2, link.end - 1).trim();
-  const destination = splitMarkdownImageDestination(body);
-  if (!destination?.source) return null;
+  const destination = parseMarkdownLinkDestination(body);
+  if (!destination?.href) return null;
 
   return {
     start: link.imageStart,
     end: link.end,
     alt: link.label,
-    source: destination.source,
-    title: destination.title,
+    source: destination.href,
+    title: destination.title ?? "",
   };
 }
 
-function splitMarkdownImageDestination(body: string): { source: string; title: string } | null {
-  if (!body) return null;
-
-  if (body.startsWith("<")) {
-    const close = findUnescapedCharacter(body, ">", 1);
-    if (close < 0) return null;
-    return {
-      source: body.slice(1, close),
-      title: parseMarkdownImageTitle(body.slice(close + 1).trim()),
-    };
-  }
-
-  const split = findMarkdownDestinationTitleStart(body);
-  if (split < 0) {
-    return { source: body, title: "" };
-  }
-
-  return {
-    source: body.slice(0, split),
-    title: parseMarkdownImageTitle(body.slice(split).trim()),
-  };
-}
-
-function findMarkdownDestinationTitleStart(value: string): number {
-  let depth = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    const char = value[index];
-    if (isEscapedAt(value, index)) continue;
-    if (char === "(") {
-      depth += 1;
-      continue;
-    }
-    if (char === ")") {
-      depth = Math.max(0, depth - 1);
-      continue;
-    }
-    if (depth === 0 && /\s/.test(char)) {
-      return index;
-    }
-  }
-  return -1;
-}
-
-function parseMarkdownImageTitle(value: string): string {
-  if (!value) return "";
-  const marker = value[0];
-  const closing = marker === "(" ? ")" : marker;
-  if ((marker === "\"" || marker === "'" || marker === "(") && value.endsWith(closing)) {
-    return value.slice(1, -1);
-  }
-  return value;
-}
-
-function findUnescapedCharacter(value: string, needle: string, start: number): number {
-  for (let index = start; index < value.length; index += 1) {
-    if (value[index] === needle && !isEscapedAt(value, index)) return index;
-  }
-  return -1;
-}
-
-function continueMarkdownQuotedList(state: TextState): TextEditResult | null {
-  const normalized = normalizeSelection(state);
+function continueMarkdownQuotedList(state: TextState, indentSize: number): TextEditResult | null {
+  const normalized = normalizeEmptyMarkdownListCursor(state, "quoted");
   if (normalized.selectionStart !== normalized.selectionEnd) return null;
   const lineBreak = getPreferredLineBreak(normalized.value);
 
@@ -2773,6 +5139,33 @@ function continueMarkdownQuotedList(state: TextState): TextEditResult | null {
   const normalizedLineEnd = lineEnd === -1 ? normalized.value.length : lineEnd;
   const line = normalized.value.slice(lineStart, normalized.selectionStart);
   const afterCursor = normalized.value.slice(normalized.selectionStart, normalizedLineEnd);
+  const quote = parseQuotePrefix(line);
+  const compact = quote
+    ? getCompactNestedBulletList(line.slice(quote.rawLength))
+    : null;
+  if (quote && compact) {
+    const lines = normalized.value.split("\n");
+    const lineIndex = findLineIndex(lines, lineStart);
+    if (!isMarkdownListMarkerIndentAllowed(
+      lines,
+      lineIndex,
+      quote.normalized,
+      compact.indent,
+    )) return null;
+    const normalizedIndentSize = indentSize === 4 ? 4 : 2;
+    const continuationIndent = compact.indent
+      + " ".repeat(normalizedIndentSize * compact.depth);
+    if (!compact.content.trim() && !afterCursor.trim()) {
+      const replacement = `${quote.normalized}${continuationIndent}`;
+      const value = `${normalized.value.slice(0, lineStart)}${replacement}${normalized.value.slice(normalized.selectionStart)}`;
+      const cursor = lineStart + replacement.length;
+      return { value, selectionStart: cursor, selectionEnd: cursor };
+    }
+    return insertMarkdownAtSelection(
+      normalized,
+      `${lineBreak}${quote.normalized}${continuationIndent}${compact.marker} ${compact.taskMarker}`,
+    );
+  }
   const quoted = matchQuotedList(line);
   if (!quoted) return null;
   const lines = normalized.value.split("\n");
@@ -2780,37 +5173,20 @@ function continueMarkdownQuotedList(state: TextState): TextEditResult | null {
   if (!isMarkdownListMarkerIndentAllowed(lines, lineIndex, quoted.quotePrefix, quoted.listIndent)) return null;
 
   if (!quoted.content.trim() && !afterCursor.trim()) {
-    if (quoted.listIndent) {
-      const removed = getSingleIndentRemoval(quoted.listIndent);
-      const replacement = `${quoted.quotePrefix}${quoted.listIndent.slice(removed)}${quoted.marker} ${quoted.taskMarker}`;
-      let value = `${normalized.value.slice(0, lineStart)}${replacement}${normalized.value.slice(normalized.selectionStart)}`;
-      let cursor = lineStart + replacement.length;
-      const number = quoted.marker.match(/^(\d+)([.)])$/);
-      if (number) {
-        const lineIndex = findLineIndex(value.split("\n"), lineStart);
-        value = renumberOrderedListBlockAtLine(value, lineIndex);
-        const lines = value.split("\n");
-        const renumbered = matchQuotedList(lines[lineIndex] ?? "");
-        if (renumbered) {
-          cursor = getLineStartOffset(lines, lineIndex) + renumbered.markerEnd;
-        }
-      }
-      return { value, selectionStart: cursor, selectionEnd: cursor };
-    }
-
-    let value = `${normalized.value.slice(0, lineStart)}${quoted.quotePrefix}${normalized.value.slice(normalized.selectionStart)}`;
+    const replacement = `${quoted.quotePrefix}${quoted.listIndent}`;
+    let value = `${normalized.value.slice(0, lineStart)}${replacement}${normalized.value.slice(normalized.selectionStart)}`;
     const number = quoted.marker.match(/^(\d+)([.)])$/);
     if (number) {
       const startLine = findLineIndex(value.split("\n"), lineStart) + 1;
-      value = renumberQuotedOrderedListLines(value, startLine, quoted.quotePrefix, quoted.listIndent, Number(number[1]), number[2]);
+      value = renumberQuotedOrderedListLines(value, startLine, quoted.quotePrefix, quoted.listIndent, normalizeOrderedListNumber(number[1]), number[2]);
     }
-    const cursor = lineStart + quoted.quotePrefix.length;
+    const cursor = lineStart + replacement.length;
     return { value, selectionStart: cursor, selectionEnd: cursor };
   }
 
   const number = quoted.marker.match(/^(\d+)([.)])$/);
   if (number) {
-    const nextMarker = `${Number(number[1]) + 1}${number[2]}`;
+    const nextMarker = `${incrementOrderedListNumber(normalizeOrderedListNumber(number[1]))}${number[2]}`;
     const insertion = `${lineBreak}${quoted.quotePrefix}${quoted.listIndent}${nextMarker} ${quoted.taskMarker}`;
     const value = `${normalized.value.slice(0, normalized.selectionStart)}${insertion}${normalized.value.slice(normalized.selectionEnd)}`;
     const cursor = normalized.selectionStart + insertion.length;
@@ -2820,7 +5196,7 @@ function continueMarkdownQuotedList(state: TextState): TextEditResult | null {
         findLineIndex(value.split("\n"), cursor) + 1,
         quoted.quotePrefix,
         quoted.listIndent,
-        Number(number[1]) + 2,
+        incrementOrderedListNumber(incrementOrderedListNumber(normalizeOrderedListNumber(number[1]))),
         number[2],
       ),
       selectionStart: cursor,
@@ -2829,6 +5205,41 @@ function continueMarkdownQuotedList(state: TextState): TextEditResult | null {
   }
 
   return insertMarkdownAtSelection(normalized, `${lineBreak}${quoted.quotePrefix}${quoted.listIndent}${quoted.marker} ${quoted.taskMarker}`);
+}
+
+function normalizeEmptyMarkdownListCursor(
+  state: TextState,
+  mode: "plain" | "quoted",
+): TextState {
+  const normalized = normalizeSelection(state);
+  if (normalized.selectionStart !== normalized.selectionEnd) return normalized;
+
+  const lineStart = normalized.value.lastIndexOf("\n", normalized.selectionStart - 1) + 1;
+  const nextLineBreak = normalized.value.indexOf("\n", normalized.selectionStart);
+  const rawLineEnd = nextLineBreak === -1 ? normalized.value.length : nextLineBreak;
+  const lineEnd = rawLineEnd > lineStart && normalized.value[rawLineEnd - 1] === "\r"
+    ? rawLineEnd - 1
+    : rawLineEnd;
+  const line = normalized.value.slice(lineStart, lineEnd);
+
+  let markerStart = -1;
+  let markerEnd = -1;
+  if (mode === "quoted") {
+    const quoted = matchQuotedList(line);
+    if (!quoted || quoted.content.trim()) return normalized;
+    markerStart = lineStart + quoted.rawQuoteLength + quoted.listIndent.length;
+    markerEnd = lineStart + quoted.markerEnd;
+  } else {
+    const list = line.match(/^(\s*)([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?$/);
+    if (!list) return normalized;
+    markerStart = lineStart + list[1].length;
+    markerEnd = lineEnd;
+  }
+
+  if (normalized.selectionStart < markerStart || normalized.selectionStart > markerEnd) {
+    return normalized;
+  }
+  return { ...normalized, selectionStart: lineEnd, selectionEnd: lineEnd };
 }
 
 function continueMarkdownDefinitionList(state: TextState): TextEditResult | null {
@@ -2939,8 +5350,18 @@ function continueMarkdownBlockquote(state: TextState): TextEditResult | null {
   const normalizedLineEnd = lineEnd === -1 ? normalized.value.length : lineEnd;
   const line = normalized.value.slice(lineStart, normalized.selectionStart);
   const afterCursor = normalized.value.slice(normalized.selectionStart, normalizedLineEnd);
+  if (!readMarkdownBlockquotePrefix(line)) return null;
   const match = line.match(/^(\s*)((?:>\s*)+)(.*)$/);
   if (!match) return null;
+  const fenceLine = getRawFenceLine(line);
+  const rawFence = getRawFenceOpen(fenceLine);
+  if (
+    rawFence
+    && hasFollowingRawFenceClosing(
+      normalized.value.slice(normalized.selectionStart),
+      rawFence,
+    )
+  ) return null;
 
   const content = match[3];
   if (!content.trim() && !afterCursor.trim()) {
@@ -2996,7 +5417,7 @@ function completeMarkdownHorizontalRule(state: TextState): TextEditResult | null
   if (normalized.value.slice(normalized.selectionStart, range.normalizedEnd).trim()) return null;
 
   const line = normalized.value.slice(range.lineStart, normalized.selectionStart);
-  if (!/^\s{0,3}(---|\*\*\*|___)$/.test(line)) return null;
+  if (!/^\s{0,3}(---|\+\+\+|\*\*\*|___)$/.test(line)) return null;
 
   return insertMarkdownAtSelection(normalized, lineBreak);
 }
@@ -3019,7 +5440,12 @@ function completeMarkdownTableShortcut(state: TextState): TextEditResult | null 
   if (findTableRange(normalized.value, normalized.selectionStart)) return null;
 
   const cells = splitTableRow(content);
-  if (cells.length < 2 || cells.every((cell) => !cell.trim())) return null;
+  const trimmedContent = content.trim();
+  const isExplicitSingleColumn = cells.length === 1
+    && trimmedContent.startsWith("|")
+    && trimmedContent.endsWith("|")
+    && !isEscapedAt(trimmedContent, trimmedContent.length - 1);
+  if ((cells.length < 2 && !isExplicitSingleColumn) || cells.every((cell) => !cell.trim())) return null;
 
   const header = `${prefix}${buildTableRow(cells)}`;
   const separator = `${prefix}${buildTableRow(cells.map(() => "---"))}`;
@@ -3054,6 +5480,69 @@ function continueMarkdownTableRow(state: TextState): TextEditResult | null {
   return { value, selectionStart: cellRange.start, selectionEnd: cellRange.end };
 }
 
+interface MarkdownRawFenceCompletion {
+  matched: boolean;
+  edit: TextEditResult | null;
+}
+
+function completeMarkdownRawFenceAtCursor(
+  state: TextState,
+): MarkdownRawFenceCompletion {
+  const normalized = normalizeSelection(state);
+  if (normalized.selectionStart !== normalized.selectionEnd) {
+    return { matched: false, edit: null };
+  }
+
+  const range = getLineRange(
+    normalized.value,
+    normalized.selectionStart,
+    normalized.selectionEnd,
+  );
+  if (normalized.value.slice(normalized.selectionStart, range.normalizedEnd).trim()) {
+    return { matched: false, edit: null };
+  }
+
+  const line = normalized.value.slice(range.lineStart, normalized.selectionStart);
+  const lines = normalized.value.split("\n");
+  const lineIndex = findLineIndex(lines, range.lineStart);
+  lines[lineIndex] = line;
+  const opening = getRawFenceOpeningAtLine(lines, lineIndex);
+  if (!opening) return { matched: false, edit: null };
+  const { fence } = opening;
+
+  const afterCursor = normalized.value.slice(normalized.selectionStart);
+  if (hasFollowingRawFenceClosing(afterCursor, fence)) {
+    return { matched: true, edit: null };
+  }
+
+  const quote = parseQuotePrefix(line);
+  const openingIndent = getLeadingMarkdownIndent(opening.openingContent);
+  const continuationPrefix = (quote?.normalized ?? "")
+    + " ".repeat(fence.listContinuationWidth)
+    + openingIndent;
+  const bodyPrefix = fence.quoteDepth > 0 || fence.listContinuationWidth > 0
+    ? continuationPrefix
+    : "";
+  const closingMarker = fence.kind === "code"
+    ? fence.marker[0].repeat(fence.marker.length)
+    : fence.marker === "$$"
+      ? "$$"
+      : "\\]";
+  const lineBreak = getPreferredLineBreak(normalized.value);
+  const insertion = lineBreak
+    + bodyPrefix
+    + lineBreak
+    + continuationPrefix
+    + closingMarker;
+  const value = normalized.value.slice(0, normalized.selectionStart)
+    + insertion
+    + afterCursor;
+  const cursor = normalized.selectionStart + lineBreak.length + bodyPrefix.length;
+  return {
+    matched: true,
+    edit: { value, selectionStart: cursor, selectionEnd: cursor },
+  };
+}
 function continueMarkdownCodeFence(state: TextState): TextEditResult | null {
   const normalized = normalizeSelection(state);
   if (normalized.selectionStart !== normalized.selectionEnd) return null;
@@ -3067,16 +5556,19 @@ function continueMarkdownCodeFence(state: TextState): TextEditResult | null {
   const content = quote ? line.slice(quote.rawLength) : line;
   const match = content.match(/^(\s*)(`{3,}|~{3,})(.*)$/);
   if (!match) return null;
-  if (getIndentWidth(match[1]) >= 4) return null;
+  if (match[2][0] === "`" && match[3].includes("`")) return null;
+  if (isMarkdownCodeIndented(content, quote?.contentColumn ?? 0)) return null;
   if (hasUnclosedCodeFenceBefore(normalized.value, range.lineStart, match[2][0])) return null;
 
   const linePrefix = `${quote?.normalized ?? ""}${match[1]}`;
   const closingFence = `${linePrefix}${match[2][0].repeat(match[2].length)}`;
   const afterCursor = normalized.value.slice(normalized.selectionStart);
-  const closingPattern = new RegExp(
-    `^\\s*\\n${escapeRegExp(linePrefix)}${escapeRegExp(match[2][0])}{${match[2].length},}(?:\\s|$)`,
-  );
-  if (closingPattern.test(afterCursor)) return null;
+  if (hasFollowingRawFenceClosing(afterCursor, {
+    kind: "code",
+    marker: match[2],
+    quoteDepth: quote?.depth ?? 0,
+    listContinuationWidth: 0,
+  })) return null;
 
   const insertion = quote ? `${lineBreak}${linePrefix}${lineBreak}${closingFence}` : `${lineBreak}${lineBreak}${closingFence}`;
   const value = `${normalized.value.slice(0, normalized.selectionStart)}${insertion}${afterCursor}`;
@@ -3095,21 +5587,45 @@ function continueMarkdownMathFence(state: TextState): TextEditResult | null {
   const line = normalized.value.slice(range.lineStart, normalized.selectionStart);
   const quote = parseQuotePrefix(line);
   const content = quote ? line.slice(quote.rawLength) : line;
-  const match = content.match(/^(\s*)\$\$\s*$/);
-  if (!match) return null;
-  if (getIndentWidth(match[1]) >= 4) return null;
+  const opening = readDollarMathBlockOpening(content, 3, quote?.contentColumn ?? 0);
+  if (!opening) return null;
   if (hasUnclosedMathFenceBefore(normalized.value, range.lineStart)) return null;
 
-  const linePrefix = `${quote?.normalized ?? ""}${match[1]}`;
+  const linePrefix = `${quote?.normalized ?? ""}${opening.indent}`;
   const closingFence = `${linePrefix}$$`;
   const afterCursor = normalized.value.slice(normalized.selectionStart);
-  const closingPattern = new RegExp(`^\\s*\\n${escapeRegExp(closingFence)}(?:\\s|$)`);
-  if (closingPattern.test(afterCursor)) return null;
+  if (hasFollowingRawFenceClosing(afterCursor, {
+    kind: "math",
+    marker: "$$",
+    quoteDepth: quote?.depth ?? 0,
+    listContinuationWidth: 0,
+  })) return null;
 
   const insertion = quote ? `${lineBreak}${linePrefix}${lineBreak}${closingFence}` : `${lineBreak}${lineBreak}${closingFence}`;
   const value = `${normalized.value.slice(0, normalized.selectionStart)}${insertion}${afterCursor}`;
   const cursor = normalized.selectionStart + lineBreak.length + (quote ? linePrefix.length : 0);
   return { value, selectionStart: cursor, selectionEnd: cursor };
+}
+
+function hasFollowingRawFenceClosing(
+  afterCursor: string,
+  fence: RawFenceState,
+): boolean {
+  const chunks = collectLineChunks(afterCursor);
+  const currentLineRemainder = chunks[0] ?? "";
+  if (
+    !hasTrailingLineBreak(currentLineRemainder)
+    || stripLineBreak(currentLineRemainder).trim()
+  ) return false;
+
+  for (const chunk of chunks.slice(1)) {
+    const line = stripLineBreak(chunk);
+    if (!line.trim()) continue;
+    const context = getRawFenceLine(line, fence.quoteDepth);
+    if (!getRawFenceContinuationContent(context, fence)) return false;
+    if (isRawFenceClose(context, fence)) return true;
+  }
+  return false;
 }
 
 function continueMarkdownBracketMathFence(state: TextState): TextEditResult | null {
@@ -3125,14 +5641,18 @@ function continueMarkdownBracketMathFence(state: TextState): TextEditResult | nu
   const content = quote ? line.slice(quote.rawLength) : line;
   const match = content.match(/^(\s*)\\\[\s*$/);
   if (!match) return null;
-  if (getIndentWidth(match[1]) >= 4) return null;
+  if (isMarkdownCodeIndented(content, quote?.contentColumn ?? 0)) return null;
   if (hasUnclosedBracketMathFenceBefore(normalized.value, range.lineStart)) return null;
 
   const linePrefix = `${quote?.normalized ?? ""}${match[1]}`;
   const closingFence = `${linePrefix}\\]`;
   const afterCursor = normalized.value.slice(normalized.selectionStart);
-  const closingPattern = new RegExp(`^\\s*\\n${escapeRegExp(closingFence)}(?:\\s|$)`);
-  if (closingPattern.test(afterCursor)) return null;
+  if (hasFollowingRawFenceClosing(afterCursor, {
+    kind: "math",
+    marker: "\\[",
+    quoteDepth: quote?.depth ?? 0,
+    listContinuationWidth: 0,
+  })) return null;
 
   const insertion = quote ? `${lineBreak}${linePrefix}${lineBreak}${closingFence}` : `${lineBreak}${lineBreak}${closingFence}`;
   const value = `${normalized.value.slice(0, normalized.selectionStart)}${insertion}${afterCursor}`;
@@ -3140,6 +5660,263 @@ function continueMarkdownBracketMathFence(state: TextState): TextEditResult | nu
   return { value, selectionStart: cursor, selectionEnd: cursor };
 }
 
+
+function findMarkdownFrontMatterRange(value: string): MarkdownFrontMatterRange | null {
+  const chunks = collectLineChunks(value);
+  const opening = stripLineBreak(chunks[0] ?? "");
+  if (!isYamlFrontMatterOpening(opening) || !hasTrailingLineBreak(chunks[0] ?? "")) return null;
+
+  const contentStart = (chunks[0] ?? "").length;
+  let offset = contentStart;
+  for (let index = 1; index < chunks.length; index += 1) {
+    const chunk = chunks[index] ?? "";
+    const line = stripLineBreak(chunk);
+    if (isYamlFrontMatterClosing(line)) {
+      return {
+        contentStart,
+        contentEnd: offset,
+        closingContentEnd: offset + line.length,
+        closingEnd: offset + chunk.length,
+      };
+    }
+    offset += chunk.length;
+  }
+  return null;
+}
+
+function unwrapMarkdownFrontMatterOnBackspace(state: TextState): TextEditResult | null {
+  const frontMatter = findMarkdownFrontMatterRange(state.value);
+  if (!frontMatter || state.selectionStart !== frontMatter.contentStart) return null;
+
+  const lineBreak = getPreferredLineBreak(state.value);
+  let content = state.value.slice(frontMatter.contentStart, frontMatter.contentEnd);
+  if (content.endsWith(lineBreak)) {
+    content = content.slice(0, -lineBreak.length);
+  }
+  const bom = state.value.startsWith("\uFEFF") ? "\uFEFF" : "";
+  const value = bom + content + state.value.slice(frontMatter.closingContentEnd);
+  const cursor = bom.length;
+  return { value, selectionStart: cursor, selectionEnd: cursor };
+}
+
+function splitMarkdownHeadingPatternOnEnter(state: TextState): TextEditResult | null {
+  const atx = getMarkdownAtxHeadingPattern(state.value, state.selectionStart);
+  if (
+    atx
+    && state.selectionStart >= atx.contentStart
+    && state.selectionEnd <= atx.contentEnd
+  ) {
+    return splitMarkdownAtxHeadingPattern(state, atx);
+  }
+
+  const setext = getMarkdownSetextHeadingPattern(state.value, state.selectionStart);
+  if (
+    setext
+    && state.selectionStart >= setext.contentStart
+    && state.selectionEnd <= setext.contentEnd
+  ) {
+    return splitMarkdownSetextHeadingPattern(state, setext);
+  }
+  return null;
+}
+
+function splitMarkdownAtxHeadingPattern(
+  state: TextState,
+  heading: MarkdownAtxHeadingPattern,
+): TextEditResult {
+  const lineBreak = getPreferredLineBreak(state.value);
+  const left = state.value.slice(heading.contentStart, state.selectionStart);
+  const right = state.value.slice(state.selectionEnd, heading.contentEnd);
+  const content = left + right;
+  const splitOffset = left.length;
+  const separator = getMarkdownContainerParagraphSeparator(heading.quotePrefix, lineBreak);
+  const emptyLine = heading.quotePrefix ? heading.quotePrefix.trimEnd() : "";
+  const emptyContinuation = heading.quotePrefix;
+  const currentHeading = heading.opening + content + heading.closing;
+  let replacement: string;
+  let cursor: number;
+
+  if (splitOffset === 0) {
+    replacement = emptyLine + separator + currentHeading;
+    cursor = heading.lineStart + emptyLine.length;
+  } else if (splitOffset === content.length) {
+    replacement = currentHeading + separator + emptyContinuation;
+    cursor = heading.lineStart + replacement.length;
+  } else {
+    const first = heading.opening + left + heading.closing;
+    const second = heading.opening + right + heading.closing;
+    replacement = first + separator + second;
+    cursor = heading.lineStart + first.length + separator.length + heading.opening.length;
+  }
+
+  const value = state.value.slice(0, heading.lineStart)
+    + replacement
+    + state.value.slice(heading.lineEnd);
+  return { value, selectionStart: cursor, selectionEnd: cursor };
+}
+
+function splitMarkdownSetextHeadingPattern(
+  state: TextState,
+  heading: MarkdownSetextHeadingPattern,
+): TextEditResult {
+  const lineBreak = getPreferredLineBreak(state.value);
+  const left = state.value.slice(heading.contentStart, state.selectionStart);
+  const right = state.value.slice(state.selectionEnd, heading.contentEnd);
+  const content = left + right;
+  const splitOffset = left.length;
+  const separator = getMarkdownContainerParagraphSeparator(heading.quotePrefix, lineBreak);
+  const emptyLine = heading.quotePrefix ? heading.quotePrefix.trimEnd() : "";
+  const emptyContinuation = heading.quotePrefix;
+  const buildHeading = (title: string) => (
+    heading.titlePrefix + title + heading.titleSuffix + lineBreak + heading.underline
+  );
+  const currentHeading = buildHeading(content);
+  let replacement: string;
+  let cursor: number;
+
+  if (splitOffset === 0) {
+    replacement = emptyLine + separator + currentHeading;
+    cursor = heading.headingStart + emptyLine.length;
+  } else if (splitOffset === content.length) {
+    replacement = currentHeading + separator + emptyContinuation;
+    cursor = heading.headingStart + replacement.length;
+  } else {
+    const first = buildHeading(left);
+    const second = buildHeading(right);
+    replacement = first + separator + second;
+    cursor = heading.headingStart
+      + first.length
+      + separator.length
+      + heading.titlePrefix.length;
+  }
+
+  const value = state.value.slice(0, heading.headingStart)
+    + replacement
+    + state.value.slice(heading.headingEnd);
+  return { value, selectionStart: cursor, selectionEnd: cursor };
+}
+
+function getMarkdownAtxHeadingPattern(
+  value: string,
+  offset: number,
+): MarkdownAtxHeadingPattern | null {
+  const lineStart = value.lastIndexOf("\n", Math.max(0, offset) - 1) + 1;
+  const nextLineBreak = value.indexOf("\n", offset);
+  const rawLineEnd = nextLineBreak < 0 ? value.length : nextLineBreak;
+  const lineEnd = rawLineEnd > lineStart && value[rawLineEnd - 1] === "\r"
+    ? rawLineEnd - 1
+    : rawLineEnd;
+  const line = value.slice(lineStart, lineEnd);
+  const quote = parseQuotePrefix(line);
+  const quoteLength = quote?.rawLength ?? 0;
+  const rest = line.slice(quoteLength);
+  const opening = rest.match(/^([ \t]{0,3})(#{1,6})([ \t]+|$)/);
+  if (!opening) return null;
+
+  const openingEnd = quoteLength + opening[0].length;
+  const body = line.slice(openingEnd);
+  const closingHashes = body.match(/^(.*?)([ \t]+#+[ \t]*)$/)
+    ?? body.match(/^()(#+[ \t]*)$/);
+  const trailingSpace = closingHashes ? null : body.match(/[ \t]+$/);
+  const contentLength = closingHashes
+    ? (closingHashes[1] ?? "").length
+    : body.length - (trailingSpace?.[0].length ?? 0);
+  const contentStart = lineStart + openingEnd;
+  const contentEnd = contentStart + contentLength;
+
+  return {
+    lineStart,
+    lineEnd,
+    contentStart,
+    contentEnd,
+    opening: line.slice(0, openingEnd),
+    closing: line.slice(openingEnd + contentLength),
+    plainPrefix: (quote?.normalized ?? "") + opening[1],
+    quotePrefix: quote?.normalized ?? "",
+  };
+}
+
+function getMarkdownSetextHeadingPattern(
+  value: string,
+  offset: number,
+): MarkdownSetextHeadingPattern | null {
+  const lineStart = value.lastIndexOf("\n", Math.max(0, offset) - 1) + 1;
+  const nextLineBreak = value.indexOf("\n", offset);
+  const rawLineEnd = nextLineBreak < 0 ? value.length : nextLineBreak;
+  const setext = findSetextHeadingRange(value, lineStart, rawLineEnd);
+  if (!setext) return null;
+
+  const titleEnd = trimCarriageReturnBeforeLineBreak(value, setext.headingEnd);
+  const underlineEnd = trimCarriageReturnBeforeLineBreak(value, setext.underlineEnd);
+  const titleLine = value.slice(setext.headingStart, titleEnd);
+  const context = getSetextLineContext(titleLine);
+  const body = titleLine.slice(context.rawQuoteLength);
+  const leading = body.match(/^[ \t]*/)?.[0] ?? "";
+  const trailing = body.match(/[ \t]*$/)?.[0] ?? "";
+  const contentStart = setext.headingStart + context.rawQuoteLength + leading.length;
+  const contentEnd = titleEnd - trailing.length;
+
+  return {
+    headingStart: setext.headingStart,
+    headingEnd: underlineEnd,
+    contentStart,
+    contentEnd,
+    titlePrefix: titleLine.slice(0, context.rawQuoteLength + leading.length),
+    titleSuffix: titleLine.slice(contentEnd - setext.headingStart),
+    underline: value.slice(setext.underlineStart, underlineEnd),
+    quotePrefix: context.quotePrefix,
+  };
+}
+
+function getMarkdownContainerParagraphPattern(
+  state: TextState,
+): MarkdownContainerParagraphPattern | null {
+  const lineBreak = getPreferredLineBreak(state.value);
+  const lineStart = state.value.lastIndexOf("\n", state.selectionStart - 1) + 1;
+  const nextLineBreak = state.value.indexOf("\n", state.selectionEnd);
+  const rawLineEnd = nextLineBreak < 0 ? state.value.length : nextLineBreak;
+  const lineEnd = rawLineEnd > lineStart && state.value[rawLineEnd - 1] === "\r"
+    ? rawLineEnd - 1
+    : rawLineEnd;
+  const line = state.value.slice(lineStart, lineEnd);
+  const quote = parseQuotePrefix(line);
+  const quoteLength = quote?.rawLength ?? 0;
+  const rest = line.slice(quoteLength);
+  const list = rest.match(/^([ \t]*)([-*+]|\d+[.)])([ \t]+)(\[[ xX]\][ \t]+)?/);
+  const separator = getMarkdownContainerParagraphSeparator(quote?.normalized ?? "", lineBreak);
+
+  if (list) {
+    const lines = state.value.split("\n");
+    const lineIndex = findLineIndex(lines, lineStart);
+    if (!isMarkdownListMarkerIndentAllowed(lines, lineIndex, quote?.normalized ?? "", list[1])) {
+      return null;
+    }
+    const markerWidth = list[2].length + list[3].length + (list[4]?.length ?? 0);
+    return {
+      contentStart: lineStart + quoteLength + list[0].length,
+      contentEnd: lineEnd,
+      separator,
+      continuation: (quote?.normalized ?? "") + list[1] + " ".repeat(markerWidth),
+    };
+  }
+
+  if (!quote) return null;
+  return {
+    contentStart: lineStart + quote.rawLength,
+    contentEnd: lineEnd,
+    separator,
+    continuation: quote.normalized,
+  };
+}
+
+function getMarkdownContainerParagraphSeparator(
+  quotePrefix: string,
+  lineBreak: "\n" | "\r\n",
+): string {
+  return quotePrefix
+    ? lineBreak + quotePrefix.trimEnd() + lineBreak
+    : lineBreak + lineBreak;
+}
 
 export function getLineRange(value: string, selectionStart: number, selectionEnd: number): LineRange {
   let start = Math.max(0, Math.min(selectionStart, selectionEnd));
@@ -3218,7 +5995,7 @@ function getSetextLineContext(line: string): SetextLineContext {
 }
 
 function isSetextUnderline(line: string): boolean {
-  return /^\s{0,3}(=+|-+)\s*$/.test(line);
+  return /^\s{0,3}(={2,}|-{2,})\s*$/.test(line);
 }
 
 function isSetextHeadingTitle(line: string): boolean {
@@ -3367,6 +6144,11 @@ export function convertRichHtmlToMarkdown(html: string): string | null {
 }
 function isRichHtmlForMarkdown(html: string): boolean {
   return /<(h[1-6]|p|div|br|a|strong|b|em|i|ul|ol|li|dl|dt|dd|blockquote|pre|code|kbd|samp|var|img|figure|figcaption|hr|table|del|s|strike|mark|u|ins|sub|sup|span|font)\b/i.test(html);
+}
+
+function isInlineRichHtmlForMarkdown(html: string): boolean {
+  const fragment = extractHtmlFragment(html);
+  return !/<(?:address|article|aside|blockquote|body|div|dl|dt|dd|figure|figcaption|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|table|ul)\b/i.test(fragment);
 }
 
 function extractHtmlFragment(html: string): string {
@@ -4604,7 +7386,7 @@ function expandSpannedTableRows(rows: ParsedTableCell[][]): ParsedTableRow[] {
 
 function buildMarkdownTableFromParsedRows(rows: ParsedTableRow[]): string | null {
   const columnCount = Math.max(0, ...rows.map((row) => row.cells.length));
-  if (rows.length === 0 || columnCount < 2) return null;
+  if (rows.length === 0 || columnCount < 1) return null;
 
   const paddedRows = rows.map((row) => ({
     cells: [
@@ -4782,7 +7564,8 @@ function isInsideMarkdownList(
     const list = body.match(/^(\s*)(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/);
     if (list) {
       if (!isMarkdownListMarkerIndentAllowed(lines, index, quotePrefix, list[1])) return false;
-      return isDeeperIndent(continuationIndent, list[1]);
+      if (getIndentWidth(list[1]) <= getIndentWidth(continuationIndent)) return true;
+      continue;
     }
 
     if (/^(?:[ \t]{2,}|\t)/.test(body)) {
@@ -4915,12 +7698,12 @@ function isDefinitionListTermContent(content: string): boolean {
   if (!content.trim()) return false;
   if (/^(?: {4,}|\t)/.test(content)) return false;
   if (isDefinitionListMarkerContent(content)) return false;
-  return !/^[ \t]{0,3}(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|(?:-{3,}|\*{3,}|_{3,})\s*$|\[[^\]\n]+]:\s*\S|\[\^[^\]\s]+]:|`{3,}|~{3,}|<|\|)/.test(content);
+  return !/^[ \t]{0,3}(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|(?:-{3,}|\+{3,}|\*{3,}|_{3,})\s*$|\[[^\]\n]+]:\s*\S|\[\^[^\]\r\n]*[^\]\s\r\n][^\]\r\n]*]:|`{3,}|~{3,}|<|\|)/.test(content);
 }
 
 function matchFootnoteDefinitionLine(line: string): { quotePrefix: string; indent: string; markerEnd: number } | null {
   const context = getFootnoteLineContext(line);
-  const match = context.content.match(/^([ \t]{0,3})\[\^[^\]\s]+]:[ \t]*/);
+  const match = context.content.match(/^([ \t]{0,3})\[\^[^\]\r\n]*[^\]\s\r\n][^\]\r\n]*]:[ \t]*/);
   return match
     ? { quotePrefix: context.quotePrefix, indent: match[1], markerEnd: context.rawQuoteLength + match[0].length }
     : null;
@@ -5006,7 +7789,7 @@ function getFootnoteLineContext(line: string): { quotePrefix: string; rawQuoteLe
 }
 
 function isFootnoteDefinitionContent(content: string): boolean {
-  return /^[ \t]{0,3}\[\^[^\]\s]+]:/.test(content);
+  return /^[ \t]{0,3}\[\^[^\]\r\n]*[^\]\s\r\n][^\]\r\n]*]:/.test(content);
 }
 
 function isFootnoteIndentedContinuationContent(content: string): boolean {
@@ -5020,41 +7803,26 @@ function isFootnoteParagraphContinuationContent(content: string): boolean {
 }
 
 function isFootnoteInterruptingBlockContent(content: string): boolean {
-  return /^(?:#{1,6}\s|(?:[-*+]|\d+[.)])\s+|>\s?|`{3,}|~{3,}|\$\$\s*$|\\\[\s*$|(?:-{3,}|\*{3,}|_{3,})\s*$|\[\^[^\]\s]+]:|\[[^\]\n]+]:\s*\S|<!--|<\/?[A-Za-z][^>\n]*>)/.test(content);
+  return Boolean(readDollarMathBlockOpening(content))
+    || /^(?:#{1,6}\s|(?:[-*+]|\d+[.)])\s+|>\s?|`{3,}|~{3,}|\\\[\s*$|(?:-{3,}|\+{3,}|\*{3,}|_{3,})\s*$|\[\^[^\]\r\n]*[^\]\s\r\n][^\]\r\n]*]:|\[[^\]\n]+]:\s*\S|<!--|<\/?[A-Za-z][^>\n]*>)/.test(content);
 }
 
-function matchQuotedHeading(line: string): QuotedHeadingMatch | null {
-  const quote = parseQuotePrefix(line);
+
+function parseQuotePrefix(line: string): {
+  rawLength: number;
+  normalized: string;
+  depth: number;
+  contentColumn: number;
+} | null {
+  const quote = readMarkdownBlockquotePrefix(line);
   if (!quote) return null;
-
-  const rest = line.slice(quote.rawLength);
-  const heading = rest.match(/^(\s{0,3})(#{1,6}\s+)/);
-  if (!heading) return null;
-
+  const leading = quote.raw.match(/^[ \t]*/)?.[0] ?? "";
   return {
-    quotePrefix: quote.normalized,
-    rawQuoteLength: quote.rawLength,
-    contentIndent: heading[1],
-    markerEnd: quote.rawLength + heading[0].length,
+    rawLength: quote.raw.length,
+    normalized: `${leading}${"> ".repeat(quote.depth)}`,
+    depth: quote.depth,
+    contentColumn: quote.contentColumn,
   };
-}
-
-function parseQuotePrefix(line: string): { rawLength: number; normalized: string } | null {
-  const leading = line.match(/^\s*/)?.[0] ?? "";
-  let cursor = leading.length;
-  let normalized = leading;
-  let count = 0;
-
-  while (line[cursor] === ">") {
-    normalized += "> ";
-    cursor += 1;
-    if (line[cursor] === " " || line[cursor] === "\t") {
-      cursor += 1;
-    }
-    count += 1;
-  }
-
-  return count > 0 ? { rawLength: cursor, normalized } : null;
 }
 
 function getSoftBreakContinuation(value: string, lineStart: number, beforeCursor: string): string {
@@ -5119,8 +7887,9 @@ function getSoftBreakBlockContinuation(value: string, lineStart: number, beforeC
   return "";
 }
 
-function getSingleIndentRemoval(indent: string): number {
-  return indent.startsWith("\t") ? 1 : Math.min(2, indent.length);
+function getSingleIndentRemoval(indent: string, indentSize = 2): number {
+  const normalizedIndentSize = indentSize === 4 ? 4 : 2;
+  return indent.startsWith("\t") ? 1 : Math.min(normalizedIndentSize, indent.length);
 }
 
 function shouldInsertPlainApostrophe(state: TextState): boolean {
@@ -5321,7 +8090,7 @@ function findLineIndex(lines: string[], cursor: number): number {
   return Math.max(0, lines.length - 1);
 }
 
-function getOrderedListStartNumberAtLine(value: string, lineIndex: number): number | null {
+function getOrderedListStartNumberAtLine(value: string, lineIndex: number): string | null {
   const lines = value.split("\n");
   if (!isListBlockLineForRenumber(lines[lineIndex] ?? "")) return null;
 
@@ -5342,7 +8111,7 @@ function getOrderedListStartNumberAtLine(value: string, lineIndex: number): numb
   for (let index = start; index <= end; index += 1) {
     const ordered = lines[index].match(/^(\s*)(\d+)[.)]\s+/);
     if (ordered && getIndentWidth(ordered[1]) === baseWidth) {
-      return Number(ordered[2]);
+      return normalizeOrderedListNumber(ordered[2]);
     }
   }
 
@@ -5357,7 +8126,7 @@ function renumberOrderedListLines(
   value: string,
   startLine: number,
   indent: string,
-  startNumber: number,
+  startNumber: string,
   delimiter: string,
 ): string {
   const lines = value.split("\n");
@@ -5376,7 +8145,7 @@ function renumberOrderedListLines(
     }
 
     lines[index] = `${indent}${nextNumber}${delimiter}${match[4]}${lines[index].slice(match[0].length)}`;
-    nextNumber += 1;
+    nextNumber = incrementOrderedListNumber(nextNumber);
   }
 
   return lines.join("\n");
@@ -5387,7 +8156,7 @@ function renumberQuotedOrderedListLines(
   startLine: number,
   quotePrefix: string,
   indent: string,
-  startNumber: number,
+  startNumber: string,
   delimiter: string,
 ): string {
   const lines = value.split("\n");
@@ -5407,7 +8176,7 @@ function renumberQuotedOrderedListLines(
     }
 
     lines[index] = `${quotePrefix}${indent}${nextNumber}${delimiter}${match[4]}${lines[index].slice(match[0].length)}`;
-    nextNumber += 1;
+    nextNumber = incrementOrderedListNumber(nextNumber);
   }
 
   return lines.join("\n");
@@ -5556,18 +8325,25 @@ function isDeeperIndent(lineIndent: string, baseIndent: string): boolean {
 }
 
 function getIndentWidth(value: string): number {
-  return Array.from(value).reduce((width, char) => width + (char === "\t" ? 4 : 1), 0);
+  return getMarkdownIndentWidth(value);
 }
 
 type RawFenceState =
-  | { kind: "code"; marker: string; quotePrefix: string }
-  | { kind: "math"; marker: "$$" | "\\["; quotePrefix: string };
+  | { kind: "code"; marker: string; quoteDepth: number; listContinuationWidth: number }
+  | { kind: "math"; marker: "$$" | "\\["; quoteDepth: number; listContinuationWidth: number };
+
+interface RawFenceUnwrapEdit {
+  start: number;
+  end: number;
+  text: string;
+}
 
 interface RawFenceBlockRange {
   openStart: number;
   openEnd: number;
   closeStart: number;
   closeEnd: number;
+  unwrapEdits: RawFenceUnwrapEdit[];
 }
 
 type RawHtmlState =
@@ -5576,31 +8352,165 @@ type RawHtmlState =
 
 interface RawFenceLine {
   quotePrefix: string;
+  quoteDepth: number;
   content: string;
+  contentColumn: number;
   trimmed: string;
 }
 
+interface RawFenceContent {
+  content: string;
+  contentColumn: number;
+}
+interface RawFenceOpening {
+  context: RawFenceLine;
+  fence: RawFenceState;
+  openingContent: string;
+  listMarkerPrefix: string;
+}
+
+function getRawFenceOpeningAtLine(
+  lines: string[],
+  lineIndex: number,
+): RawFenceOpening | null {
+  const line = (lines[lineIndex] ?? "").replace(/\r$/, "");
+  const context = getRawFenceLine(line);
+  const baseWidth = getEnclosingMarkdownListContinuationWidth(
+    lines,
+    lineIndex,
+    line,
+    context,
+  );
+  if (baseWidth !== null) {
+    const stripped = stripMarkdownIndentColumns(
+      context.content,
+      baseWidth,
+      context.contentColumn,
+    );
+    if (stripped) {
+      const adjusted: RawFenceLine = {
+        ...context,
+        content: stripped.content,
+        contentColumn: context.contentColumn + baseWidth,
+        trimmed: stripped.content.trim(),
+      };
+      const nested = getRawFenceOpen(adjusted);
+      if (nested) {
+        const container = stripMarkdownListContainerMarkers(
+          adjusted.content,
+          adjusted.contentColumn,
+        );
+        return {
+          context,
+          fence: {
+            ...nested,
+            listContinuationWidth: baseWidth + nested.listContinuationWidth,
+          },
+          openingContent: container.content,
+          listMarkerPrefix: container.prefixLength > 0
+            ? context.quotePrefix
+              + context.content.slice(0, stripped.prefixLength)
+              + adjusted.content.slice(0, container.prefixLength)
+            : "",
+        };
+      }
+    }
+  }
+
+  const direct = getRawFenceOpen(context);
+  if (!direct) return null;
+  const container = stripMarkdownListContainerMarkers(
+    context.content,
+    context.contentColumn,
+  );
+  return {
+    context,
+    fence: direct,
+    openingContent: container.content,
+    listMarkerPrefix: container.prefixLength > 0
+      ? context.quotePrefix + context.content.slice(0, container.prefixLength)
+      : "",
+  };
+}
+
+function getEnclosingMarkdownListContinuationWidth(
+  lines: string[],
+  lineIndex: number,
+  line: string,
+  context: RawFenceLine,
+): number | null {
+  const quote = parseQuotePrefix(line);
+  const quotePrefix = quote?.normalized ?? "";
+  const currentIndent = getLeadingMarkdownIndent(context.content);
+  if (!isInsideMarkdownList(lines, lineIndex, quotePrefix, currentIndent)) {
+    return null;
+  }
+
+  for (let index = lineIndex - 1; index >= 0; index -= 1) {
+    const previousLine = (lines[index] ?? "").replace(/\r$/, "");
+    const previous = getRawFenceLine(previousLine);
+    if (previous.quoteDepth !== context.quoteDepth) {
+      if (previousLine.trim()) return null;
+      continue;
+    }
+    if (!previous.content.trim()) continue;
+
+    const container = stripMarkdownListContainerMarkers(
+      previous.content,
+      previous.contentColumn,
+    );
+    if (container.prefixLength > 0) {
+      return stripMarkdownIndentColumns(
+        context.content,
+        container.continuationIndentWidth,
+        context.contentColumn,
+      )
+        ? container.continuationIndentWidth
+        : null;
+    }
+    if (/^[ \t]+/.test(previous.content)) continue;
+    return null;
+  }
+  return null;
+}
+
 function hasUnclosedCodeFenceBefore(value: string, lineStart: number, fenceChar: string): boolean {
-  const fence = getUnclosedRawFenceBefore(value, lineStart);
+  const fence = getActiveRawFenceAtLine(value, lineStart);
   return fence?.kind === "code" && fence.marker[0] === fenceChar;
 }
 
 function hasUnclosedMathFenceBefore(value: string, lineStart: number): boolean {
-  const fence = getUnclosedRawFenceBefore(value, lineStart);
+  const fence = getActiveRawFenceAtLine(value, lineStart);
   return fence?.kind === "math" && fence.marker === "$$";
 }
 
 function hasUnclosedBracketMathFenceBefore(value: string, lineStart: number): boolean {
-  const fence = getUnclosedRawFenceBefore(value, lineStart);
+  const fence = getActiveRawFenceAtLine(value, lineStart);
   return fence?.kind === "math" && fence.marker === "\\[";
 }
 
+function getActiveRawFenceAtLine(value: string, lineStart: number): RawFenceState | null {
+  const fence = getUnclosedRawFenceBefore(value, lineStart);
+  if (!fence) return null;
+  const lineEnd = value.indexOf("\n", lineStart);
+  const currentLine = value
+    .slice(lineStart, lineEnd < 0 ? value.length : lineEnd)
+    .replace(/\r$/, "");
+  const context = getRawFenceLine(currentLine, fence.quoteDepth);
+  return getRawFenceContinuationContent(context, fence) ? fence : null;
+}
+
 function isInsideMarkdownRawFence(value: string, lineStart: number): boolean {
-  return getUnclosedRawFenceBefore(value, lineStart) !== null;
+  return getActiveRawFenceAtLine(value, lineStart) !== null;
 }
 
 function isInsideMarkdownRawBlock(value: string, lineStart: number): boolean {
-  return isInsideMarkdownRawFence(value, lineStart) || getUnclosedRawHtmlBlockBefore(value, lineStart) !== null;
+  const frontMatter = findMarkdownFrontMatterRange(value);
+  return isInsideMarkdownRawFence(value, lineStart)
+    || getUnclosedRawHtmlBlockBefore(value, lineStart) !== null
+    || Boolean(
+      frontMatter && lineStart >= frontMatter.contentStart && lineStart < frontMatter.closingEnd,
+    );
 }
 
 function findClosedRawFenceBlock(
@@ -5610,44 +8520,134 @@ function findClosedRawFenceBlock(
   kind: "code" | "math",
 ): RawFenceBlockRange | null {
   const chunks = collectLineChunks(value);
+  const lines = chunks.map((chunk) => stripLineBreak(chunk));
   let active: (RawFenceState & { openLine: number }) | null = null;
   const targetStart = Math.max(0, Math.min(selectionStart, selectionEnd));
   const targetEnd = Math.max(0, Math.max(selectionStart, selectionEnd));
 
   for (let index = 0; index < chunks.length; index += 1) {
-    const context = getRawFenceLine(stripLineBreak(chunks[index] ?? ""));
+    const line = lines[index] ?? "";
+    let context = getRawFenceLine(line, active?.quoteDepth ?? null);
     if (active) {
-      if (isRawFenceClose(context, active)) {
+      const continuation = getRawFenceContinuationContent(context, active);
+      if (continuation && isRawFenceClose(context, active)) {
         const openStart = getChunkStartOffset(chunks, active.openLine);
         const closeEnd = getChunkEndOffset(chunks, index);
         const collapsedAfterClosingLine = targetStart === targetEnd && targetStart === closeEnd && hasTrailingLineBreak(chunks[index] ?? "");
         if (active.kind === kind && targetStart >= openStart && targetEnd <= closeEnd && !collapsedAfterClosingLine) {
+          const openEnd = getChunkEndOffset(chunks, active.openLine);
+          const closeStart = getChunkStartOffset(chunks, index);
           return {
             openStart,
-            openEnd: getChunkEndOffset(chunks, active.openLine),
-            closeStart: getChunkStartOffset(chunks, index),
+            openEnd,
+            closeStart,
             closeEnd,
+            unwrapEdits: getRawFenceUnwrapEdits(
+              chunks,
+              active.openLine,
+              index,
+              active,
+              openStart,
+              openEnd,
+              closeStart,
+              closeEnd,
+            ),
           };
         }
         active = null;
       }
-      continue;
+      if (continuation) continue;
+      active = null;
+      context = getRawFenceLine(line);
     }
 
-    const opened = getRawFenceOpen(context);
-    if (opened) {
-      active = { ...opened, openLine: index };
+    const opening = getRawFenceOpeningAtLine(lines, index);
+    if (opening) {
+      active = { ...opening.fence, openLine: index };
     }
   }
 
   return null;
 }
 
+function getRawFenceUnwrapEdits(
+  chunks: string[],
+  openLine: number,
+  closeLine: number,
+  fence: RawFenceState,
+  openStart: number,
+  openEnd: number,
+  closeStart: number,
+  closeEnd: number,
+): RawFenceUnwrapEdit[] {
+  const lines = chunks.map((chunk) => stripLineBreak(chunk));
+  const opening = getRawFenceOpeningAtLine(lines, openLine);
+  const openingText = opening?.listMarkerPrefix ?? "";
+  const edits: RawFenceUnwrapEdit[] = [
+    { start: openStart, end: openEnd, text: openingText },
+  ];
+
+  if (openingText && closeLine > openLine + 1) {
+    const firstLine = openLine + 1;
+    const firstStart = getChunkStartOffset(chunks, firstLine);
+    const first = getRawFenceLine(
+      stripLineBreak(chunks[firstLine] ?? ""),
+      fence.quoteDepth,
+    );
+    const stripped = stripMarkdownIndentColumns(
+      first.content,
+      fence.listContinuationWidth,
+      first.contentColumn,
+    );
+    if (stripped) {
+      const remaining = first.content.slice(stripped.prefixLength);
+      const synthetic = stripped.content.slice(
+        0,
+        Math.max(0, stripped.content.length - remaining.length),
+      );
+      edits.push({
+        start: firstStart,
+        end: firstStart + first.quotePrefix.length + stripped.prefixLength,
+        text: synthetic,
+      });
+    }
+  }
+
+  edits.push({ start: closeStart, end: closeEnd, text: "" });
+  return edits;
+}
 function getRawFenceOpen(line: RawFenceLine): RawFenceState | null {
-  const code = line.content.match(/^[ \t]{0,3}(`{3,}|~{3,})/);
-  if (code) return { kind: "code", marker: code[1], quotePrefix: line.quotePrefix };
-  if (/^[ \t]{0,3}\$\$\s*$/.test(line.content)) return { kind: "math", marker: "$$", quotePrefix: line.quotePrefix };
-  if (/^[ \t]{0,3}\\\[\s*$/.test(line.content)) return { kind: "math", marker: "\\[", quotePrefix: line.quotePrefix };
+  const container = stripMarkdownListContainerMarkers(line.content, line.contentColumn);
+  const content = container.content;
+  const contentColumn = line.contentColumn + container.continuationIndentWidth;
+  if (container.codeIndented || isMarkdownCodeIndented(content, contentColumn)) return null;
+  const indent = getLeadingMarkdownIndent(content);
+  const semantic = content.slice(indent.length);
+  const code = semantic.match(/^(`{3,}|~{3,})([^\r\n]*)$/);
+  if (code && !(code[1][0] === "`" && code[2].includes("`"))) {
+    return {
+      kind: "code",
+      marker: code[1],
+      quoteDepth: line.quoteDepth,
+      listContinuationWidth: container.continuationIndentWidth,
+    };
+  }
+  if (readDollarMathBlockOpening(content, 3, contentColumn)) {
+    return {
+      kind: "math",
+      marker: "$$",
+      quoteDepth: line.quoteDepth,
+      listContinuationWidth: container.continuationIndentWidth,
+    };
+  }
+  if (/^\\\[\s*$/.test(semantic)) {
+    return {
+      kind: "math",
+      marker: "\\[",
+      quoteDepth: line.quoteDepth,
+      listContinuationWidth: container.continuationIndentWidth,
+    };
+  }
   return null;
 }
 
@@ -5656,56 +8656,79 @@ function stripLineBreak(value: string): string {
 }
 
 function getUnclosedRawFenceBefore(value: string, lineStart: number): RawFenceState | null {
-  const lines = value.slice(0, lineStart).split(/\r?\n/);
+  const beforeLine = value.slice(0, lineStart).replace(/\r?\n$/, "");
+  const lines = beforeLine ? beforeLine.split(/\r?\n/) : [];
   let active: RawFenceState | null = null;
 
-  for (const line of lines) {
-    const context = getRawFenceLine(line);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    let context = getRawFenceLine(line, active?.quoteDepth ?? null);
     if (active) {
-      if (isRawFenceClose(context, active)) {
-        active = null;
+      const continuation = getRawFenceContinuationContent(context, active);
+      if (continuation) {
+        if (isRawFenceClose(context, active)) active = null;
+        continue;
       }
-      continue;
+      active = null;
+      context = getRawFenceLine(line);
     }
-
-    const code = context.content.match(/^[ \t]{0,3}(`{3,}|~{3,})/);
-    if (code) {
-      active = { kind: "code", marker: code[1], quotePrefix: context.quotePrefix };
-      continue;
-    }
-
-    if (/^[ \t]{0,3}\$\$\s*$/.test(context.content)) {
-      active = { kind: "math", marker: "$$", quotePrefix: context.quotePrefix };
-      continue;
-    }
-    if (/^[ \t]{0,3}\\\[\s*$/.test(context.content)) {
-      active = { kind: "math", marker: "\\[", quotePrefix: context.quotePrefix };
-    }
+    active = getRawFenceOpeningAtLine(lines, index)?.fence ?? null;
   }
 
   return active;
 }
 
-function getRawFenceLine(line: string): RawFenceLine {
-  const quote = parseQuotePrefix(line);
-  const content = quote ? line.slice(quote.rawLength) : line;
+function getRawFenceLine(
+  line: string,
+  maximumQuoteDepth: number | null = null,
+): RawFenceLine {
+  const quote = readMarkdownBlockquotePrefix(line, maximumQuoteDepth);
+  const content = quote ? line.slice(quote.raw.length) : line;
   return {
-    quotePrefix: quote?.normalized ?? "",
+    quotePrefix: quote?.raw ?? "",
+    quoteDepth: quote?.depth ?? 0,
     content,
+    contentColumn: quote?.contentColumn ?? 0,
     trimmed: content.trim(),
   };
 }
 
+function getRawFenceContinuationContent(
+  line: RawFenceLine,
+  fence: RawFenceState,
+): RawFenceContent | null {
+  if (line.quoteDepth !== fence.quoteDepth) return null;
+  if (fence.listContinuationWidth === 0 || !line.content.trim()) {
+    return { content: line.content, contentColumn: line.contentColumn };
+  }
+  const stripped = stripMarkdownIndentColumns(
+    line.content,
+    fence.listContinuationWidth,
+    line.contentColumn,
+  );
+  return stripped
+    ? {
+      content: stripped.content,
+      contentColumn: line.contentColumn + fence.listContinuationWidth,
+    }
+    : null;
+}
+
 function isRawFenceClose(line: RawFenceLine, fence: RawFenceState): boolean {
-  if (line.quotePrefix !== fence.quotePrefix) return false;
+  const continuation = getRawFenceContinuationContent(line, fence);
+  if (!continuation) return false;
+  const { content, contentColumn } = continuation;
+  if (isMarkdownCodeIndented(content, contentColumn)) return false;
+  const indent = getLeadingMarkdownIndent(content);
+  const semantic = content.slice(indent.length);
 
   if (fence.kind === "math") {
     return fence.marker === "$$"
-      ? /^[ \t]{0,3}\$\$\s*$/.test(line.content)
-      : /^[ \t]{0,3}\\\]\s*$/.test(line.content);
+      ? isDollarMathBlockClosing(content, 3, contentColumn)
+      : /^\\\]\s*$/.test(semantic);
   }
 
-  const closing = line.content.match(/^[ \t]{0,3}(`{3,}|~{3,})/);
+  const closing = semantic.match(/^(`{3,}|~{3,})[ \t]*$/);
   return Boolean(closing && closing[1][0] === fence.marker[0] && closing[1].length >= fence.marker.length);
 }
 
@@ -5715,9 +8738,12 @@ function getUnclosedRawHtmlBlockBefore(value: string, lineStart: number): RawHtm
   let active: RawHtmlState | null = null;
 
   for (const line of lines) {
-    const context = getRawFenceLine(line);
+    const activeQuoteDepth = active
+      ? readMarkdownBlockquotePrefix(active.quotePrefix)?.depth ?? 0
+      : null;
+    const context = getRawFenceLine(line, activeQuoteDepth);
     if (active) {
-      if (context.quotePrefix !== active.quotePrefix) {
+      if (context.quoteDepth !== activeQuoteDepth) {
         active = null;
       } else {
         if (isRawHtmlBlockClose(context, active)) {
@@ -5745,7 +8771,7 @@ function getRawHtmlBlockOpen(line: RawFenceLine): RawHtmlState | null {
   if (/^<![A-Z]/.test(content)) return { kind: "untilClose", quotePrefix: line.quotePrefix, closePattern: />/ };
   if (/^<!\[CDATA\[/.test(content)) return { kind: "untilClose", quotePrefix: line.quotePrefix, closePattern: /\]\]>/ };
 
-  const rawTag = content.match(/^<(script|pre|style)(?=[\s>/])/i);
+  const rawTag = content.match(/^<(script|pre|style|textarea)(?=[\s>/])/i);
   if (rawTag) {
     return {
       kind: "untilClose",
@@ -5754,7 +8780,7 @@ function getRawHtmlBlockOpen(line: RawFenceLine): RawHtmlState | null {
     };
   }
 
-  if (/^<\/?(address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?=[\s>/])/i.test(content)) {
+  if (/^<\/?(address|article|aside|audio|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul|video)(?=[\s>/])/i.test(content)) {
     return { kind: "untilBlank", quotePrefix: line.quotePrefix };
   }
 
@@ -5911,7 +8937,7 @@ function isTableRowContent(content: string): boolean {
 
 function isTableSeparatorContent(content: string): boolean {
   const cells = splitTableRow(content);
-  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell));
 }
 
 function getTableLineContext(line: string): { content: string; prefix: string; rawPrefixLength: number } {
@@ -5948,27 +8974,17 @@ function countUnescapedPipes(value: string): number {
 }
 
 function stripInlineFormatting(value: string): string {
-  const protectedSegments: string[] = [];
-  const protect = (content: string) => {
-    const token = `\uE000${protectedSegments.length}\uE001`;
-    protectedSegments.push(content);
-    return token;
-  };
-  const restore = (content: string) => content.replace(/\uE000(\d+)\uE001/g, (_match, index: string) => protectedSegments[Number(index)] ?? "");
-  const withoutLinks = replaceMarkdownLinkSyntax(value, (link) => link.label)
-    .replace(/<([^>\s]+)>/g, (match, href: string) => (isRenderedAutolink(href) ? href : match))
-    .replace(/<!--\s*([\s\S]*?)\s*-->/g, "$1")
-    .replace(/<br\s*\/?>/gi, " ");
-  return restore(stripInlineHtmlFormatting(withoutLinks)
-    .replace(/(\*\*|__)([\s\S]*?)\1/g, "$2")
-    .replace(/(\*|_)([^*_]+?)\1/g, "$2")
-    .replace(/~~([\s\S]*?)~~/g, "$1")
-    .replace(/==([\s\S]*?)==/g, "$1")
-    .replace(/(`+)([\s\S]*?)\1/g, (_match, _marker: string, content: string) => protect(stripCodeSpanPadding(content)))
-    .replace(/\\\(([\s\S]*?)\\\)/g, (_match, formula: string) => protect(formula))
-    .replace(/(^|[^\\$])\$([^\s\n$](?:[^\n$]*?[^\s\n$])?)\$(?!\$)/g, (_match, lead: string, formula: string) => `${lead}${protect(formula)}`)
-    .replace(/\^([^^]+)\^/g, "$1")
-    .replace(/~([^~]+)~/g, "$1"));
+  const { body, ending } = splitCarriageReturnEnding(value);
+  const math = protectMarkdownMathForPlainText(body);
+  const withoutLinks = replaceMarkdownLinkSyntax(math.value, (link) => link.label);
+  const html = renderMarkdownInlineSource(withoutLinks, {
+    settings: clearFormatMarkdownSettings,
+    documentSource: body,
+  });
+  return math.restore(getVisibleTextFromMarkdownHtml(html, {
+    blockLayout: false,
+    includeComments: true,
+  })) + ending;
 }
 
 function stripLineFormattingWithMap(line: string, column: number): { line: string; cursor: number } {
@@ -6000,30 +9016,381 @@ function mapStrippedInlineOffset(source: string, stripped: string, offset: numbe
   return strippedCursor;
 }
 
-function stripCodeSpanPadding(content: string): string {
-  if (content.startsWith(" ") && content.endsWith(" ") && content.trim()) {
-    return content.slice(1, -1);
+function protectMarkdownMathForPlainText(source: string): {
+  value: string;
+  restore: (value: string) => string;
+} {
+  const segments: string[] = [];
+  let value = source;
+  const items = collectMathDocumentItems(source)
+    .sort((left, right) => right.from - left.from || right.to - left.to);
+
+  for (const item of items) {
+    const token = `\uE100${segments.length}\uE101`;
+    segments.push(item.formula);
+    value = `${value.slice(0, item.from)}${token}${value.slice(item.to)}`;
   }
-  return content;
+
+  return {
+    value,
+    restore: (plain) => plain.replace(
+      /\uE100(\d+)\uE101/g,
+      (_match, index: string) => segments[Number(index)] ?? "",
+    ),
+  };
 }
 
-function stripInlineHtmlFormatting(value: string): string {
-  let next = value;
-  let changed = true;
-  while (changed) {
-    const before = next;
-    next = next.replace(
-      /<(strong|b|em|i|del|s|strike|mark|u|ins|sub|sup|span|font|code|kbd|samp|var|a)\b[^>]*>([\s\S]*?)<\/\1>/gi,
-      "$2",
-    );
-    changed = before !== next;
-  }
-  return next;
+function restorePreferredLineBreaks(value: string, source: string): string {
+  return source.includes("\r\n")
+    ? value.replace(/\r?\n/g, "\r\n")
+    : value.replace(/\r\n/g, "\n");
 }
 
-function isRenderedAutolink(href: string): boolean {
-  const action = getPreviewLinkAction(href);
-  return action === "external" || action === "local";
+function normalizeTablesForPlainTextRender(source: string): string {
+  const lines = source.split("\n");
+  const output: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const context = getTableLineContext(line);
+    const nextContext = getTableLineContext(lines[index + 1] ?? "");
+    const startsTable = isTableRowContent(context.content)
+      && context.prefix === nextContext.prefix
+      && isTableSeparatorContent(nextContext.content);
+    if (startsTable && output.length > 0 && output.at(-1)?.trim()) {
+      output.push(context.prefix.trimEnd());
+    }
+    output.push(line);
+  }
+
+  return output.join("\n");
+}
+
+interface MarkdownHtmlPlainTextOptions {
+  blockLayout: boolean;
+  includeComments: boolean;
+}
+
+interface PlainTextHtmlTag {
+  end: number;
+  name: string;
+  closing: boolean;
+  selfClosing: boolean;
+  attributes: ReadonlyMap<string, string>;
+}
+
+const hiddenPlainTextHtmlTags = new Set([
+  "head",
+  "script",
+  "style",
+  "template",
+  "title",
+]);
+const plainTextBlockEndTags = new Set([
+  "dd",
+  "div",
+  "dt",
+  "figcaption",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "li",
+  "p",
+  "pre",
+  "tr",
+]);
+
+function getVisibleTextFromMarkdownHtml(
+  html: string,
+  options: MarkdownHtmlPlainTextOptions,
+): string {
+  const codeSegments: string[] = [];
+  const hiddenTags: string[] = [];
+  const suppressedTags: string[] = [];
+  let output = "";
+  let cursor = 0;
+  let codeDepth = 0;
+  let tableCellIndex = 0;
+  let mathContainerDepth = 0;
+  let mathFormulaFound = false;
+  let trimTaskText = false;
+
+  const append = (value: string) => {
+    if (!value) return;
+    if (codeDepth > 0) {
+      const token = `\uE200${codeSegments.length}\uE201`;
+      codeSegments.push(value);
+      output += token;
+      return;
+    }
+    output += value;
+  };
+  const ensureLineBreaks = (count: number) => {
+    const existing = output.match(/\n*$/)?.[0].length ?? 0;
+    if (existing < count) output += "\n".repeat(count - existing);
+  };
+
+  while (cursor < html.length) {
+    if (html.startsWith("<!--", cursor)) {
+      const close = html.indexOf("-->", cursor + 4);
+      const end = close < 0 ? html.length : close + 3;
+      if (
+        options.includeComments
+        && hiddenTags.length === 0
+        && suppressedTags.length === 0
+        && mathContainerDepth === 0
+      ) {
+        append(html.slice(cursor + 4, close < 0 ? html.length : close).trim());
+      }
+      cursor = end;
+      continue;
+    }
+
+    if (html[cursor] !== "<") {
+      const nextTag = html.indexOf("<", cursor);
+      const end = nextTag < 0 ? html.length : nextTag;
+      if (hiddenTags.length === 0 && suppressedTags.length === 0 && mathContainerDepth === 0) {
+        let text = markdownHtmlEntityUtils.unescapeAll(html.slice(cursor, end));
+        if (trimTaskText) {
+          text = text.replace(/^ /, "");
+          trimTaskText = false;
+        }
+        if (!(
+          options.blockLayout
+          && codeDepth === 0
+          && /^[\t\r\n ]+$/.test(text)
+          && /[\r\n]/.test(text)
+        )) {
+          append(text);
+        }
+      }
+      cursor = end;
+      continue;
+    }
+
+    const tag = readPlainTextHtmlTag(html, cursor);
+    if (!tag) {
+      if (hiddenTags.length === 0 && suppressedTags.length === 0 && mathContainerDepth === 0) {
+        append("<");
+      }
+      cursor += 1;
+      continue;
+    }
+    cursor = tag.end;
+    if (!tag.name) continue;
+
+    if (hiddenTags.length > 0) {
+      if (tag.closing && tag.name === hiddenTags.at(-1)) {
+        hiddenTags.pop();
+      } else if (!tag.closing && hiddenPlainTextHtmlTags.has(tag.name) && !tag.selfClosing) {
+        hiddenTags.push(tag.name);
+      }
+      continue;
+    }
+
+    if (suppressedTags.length > 0) {
+      if (tag.closing && tag.name === suppressedTags.at(-1)) {
+        suppressedTags.pop();
+      }
+      continue;
+    }
+
+    if (mathContainerDepth > 0) {
+      if (
+        !tag.closing
+        && !mathFormulaFound
+        && tag.attributes.get("data-mml-node") === "math"
+      ) {
+        const formula = tag.attributes.get("data-latex");
+        if (formula !== undefined) {
+          append(markdownHtmlEntityUtils.unescapeAll(formula));
+          mathFormulaFound = true;
+        }
+      }
+      if (!tag.closing && tag.name === "mjx-container" && !tag.selfClosing) {
+        mathContainerDepth += 1;
+      } else if (tag.closing && tag.name === "mjx-container") {
+        mathContainerDepth = Math.max(0, mathContainerDepth - 1);
+        if (mathContainerDepth === 0) mathFormulaFound = false;
+      }
+      continue;
+    }
+
+    if (!tag.closing && tag.name === "mjx-container" && !tag.selfClosing) {
+      mathContainerDepth = 1;
+      mathFormulaFound = false;
+      continue;
+    }
+
+    if (!tag.closing && hiddenPlainTextHtmlTags.has(tag.name) && !tag.selfClosing) {
+      hiddenTags.push(tag.name);
+      continue;
+    }
+
+    if (
+      !tag.closing
+      && tag.name === "a"
+      && hasHtmlClass(tag.attributes, "footnote-backref")
+      && !tag.selfClosing
+    ) {
+      suppressedTags.push(tag.name);
+      continue;
+    }
+
+    if (!tag.closing) {
+      if ((tag.name === "code" || tag.name === "pre") && !tag.selfClosing) {
+        codeDepth += 1;
+      } else if (tag.name === "br") {
+        append(options.blockLayout ? "\n" : " ");
+      } else if (tag.name === "hr") {
+        if (hasHtmlClass(tag.attributes, "footnotes-sep")) {
+          if (options.blockLayout) ensureLineBreaks(1);
+        } else {
+          if (options.blockLayout && output) ensureLineBreaks(2);
+          append("---");
+          if (options.blockLayout) ensureLineBreaks(1);
+        }
+      } else if (tag.name === "tr" && options.blockLayout) {
+        if (output && !output.endsWith("\n")) ensureLineBreaks(1);
+        tableCellIndex = 0;
+      } else if ((tag.name === "th" || tag.name === "td") && options.blockLayout) {
+        if (tableCellIndex > 0) append(" | ");
+        tableCellIndex += 1;
+      } else if (tag.name === "img") {
+        const alt = tag.attributes.get("alt");
+        if (alt) append(markdownHtmlEntityUtils.unescapeAll(alt));
+      } else if (
+        tag.name === "input"
+        && hasHtmlClass(tag.attributes, "task-list-item-checkbox")
+      ) {
+        trimTaskText = true;
+      }
+      continue;
+    }
+
+    if (tag.name === "code" || tag.name === "pre") {
+      codeDepth = Math.max(0, codeDepth - 1);
+    }
+    if (options.blockLayout && plainTextBlockEndTags.has(tag.name)) {
+      ensureLineBreaks(1);
+    }
+  }
+
+  let plain = output;
+  if (options.blockLayout) {
+    plain = plain
+      .replace(/\r\n?/g, "\n")
+      .replace(/[\t ]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/^\n+|\n+$/g, "");
+  }
+  return plain.replace(
+    /\uE200(\d+)\uE201/g,
+    (_match, index: string) => codeSegments[Number(index)] ?? "",
+  );
+}
+
+function hasHtmlClass(attributes: ReadonlyMap<string, string>, name: string): boolean {
+  return (attributes.get("class") ?? "").split(/\s+/).includes(name);
+}
+
+function readPlainTextHtmlTag(source: string, start: number): PlainTextHtmlTag | null {
+  if (source[start] !== "<") return null;
+  if (source.startsWith("<!", start) || source.startsWith("<?", start)) {
+    const end = findPlainTextHtmlTagEnd(source, start + 2);
+    return end === null
+      ? null
+      : { end, name: "", closing: false, selfClosing: true, attributes: new Map() };
+  }
+
+  let cursor = start + 1;
+  let closing = false;
+  if (source[cursor] === "/") {
+    closing = true;
+    cursor += 1;
+  }
+  if (!/[A-Za-z]/.test(source[cursor] ?? "")) return null;
+  const nameStart = cursor;
+  while (/[A-Za-z0-9:-]/.test(source[cursor] ?? "")) cursor += 1;
+  const name = source.slice(nameStart, cursor).toLowerCase();
+  const attributesStart = cursor;
+  const end = findPlainTextHtmlTagEnd(source, cursor);
+  if (end === null) return null;
+  let beforeClose = end - 2;
+  while (beforeClose >= attributesStart && /\s/.test(source[beforeClose] ?? "")) beforeClose -= 1;
+  const selfClosing = source[beforeClose] === "/";
+  return {
+    end,
+    name,
+    closing,
+    selfClosing,
+    attributes: closing
+      ? new Map()
+      : readPlainTextHtmlAttributes(source, attributesStart, end - 1),
+  };
+}
+
+function findPlainTextHtmlTagEnd(source: string, start: number): number | null {
+  let quote = "";
+  for (let cursor = start; cursor < source.length; cursor += 1) {
+    const character = source[cursor] ?? "";
+    if (quote) {
+      if (character === quote) quote = "";
+      continue;
+    }
+    if (character === "\"" || character === "'") {
+      quote = character;
+    } else if (character === ">") {
+      return cursor + 1;
+    }
+  }
+  return null;
+}
+
+function readPlainTextHtmlAttributes(
+  source: string,
+  start: number,
+  end: number,
+): ReadonlyMap<string, string> {
+  const attributes = new Map<string, string>();
+  let cursor = start;
+
+  while (cursor < end) {
+    while (cursor < end && (/[\s/]/.test(source[cursor] ?? ""))) cursor += 1;
+    const nameStart = cursor;
+    while (cursor < end && !/[\s=/>]/.test(source[cursor] ?? "")) cursor += 1;
+    if (cursor === nameStart) {
+      cursor += 1;
+      continue;
+    }
+    const name = source.slice(nameStart, cursor).toLowerCase();
+    while (cursor < end && /\s/.test(source[cursor] ?? "")) cursor += 1;
+    let value = "";
+    if (source[cursor] === "=") {
+      cursor += 1;
+      while (cursor < end && /\s/.test(source[cursor] ?? "")) cursor += 1;
+      const quote = source[cursor] === "\"" || source[cursor] === "'"
+        ? source[cursor]
+        : "";
+      if (quote) {
+        cursor += 1;
+        const valueStart = cursor;
+        while (cursor < end && source[cursor] !== quote) cursor += 1;
+        value = source.slice(valueStart, cursor);
+        if (source[cursor] === quote) cursor += 1;
+      } else {
+        const valueStart = cursor;
+        while (cursor < end && !/[\s>]/.test(source[cursor] ?? "")) cursor += 1;
+        value = source.slice(valueStart, cursor);
+      }
+    }
+    attributes.set(name, value);
+  }
+
+  return attributes;
 }
 
 function stripBlockFormatting(value: string): string {
@@ -6039,7 +9406,7 @@ function stripBlockFormatting(value: string): string {
     } else {
       next = next
         .replace(/^\s{0,3}>\s?/, "")
-        .replace(/^\s{0,3}\[\^[^\]\s]+]:[ \t]*/, "")
+        .replace(/^\s{0,3}\[\^[^\]\r\n]*[^\]\s\r\n][^\]\r\n]*]:[ \t]*/, "")
         .replace(/^\s{0,3}:(?:[ \t]+|$)/, "");
       next = stripListBlockFormattingMarker(next);
     }
@@ -6110,7 +9477,7 @@ function stripLineForListFormatting(
     content = stripAtxClosingMarker(heading[1]);
   }
 
-  const footnoteDefinition = content.match(/^\[\^[^\]\s]+]:[ \t]*/);
+  const footnoteDefinition = content.match(/^\[\^[^\]\r\n]*[^\]\s\r\n][^\]\r\n]*]:[ \t]*/);
   if (footnoteDefinition) {
     contentStart += footnoteDefinition[0].length;
     content = content.slice(footnoteDefinition[0].length);
@@ -6175,7 +9542,7 @@ function stripBlockMarkers(line: string): { indent: string; content: string; con
     } else {
       const marker = [
         /^>\s?/,
-        /^[ \t]{0,3}\[\^[^\]\s]+]:[ \t]*/,
+        /^[ \t]{0,3}\[\^[^\]\r\n]*[^\]\s\r\n][^\]\r\n]*]:[ \t]*/,
         /^[ \t]{0,3}:(?:[ \t]+|$)/,
         ...(getIndentWidth(indent) < 4
           ? [

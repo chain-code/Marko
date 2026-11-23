@@ -66,3 +66,24 @@ test("insertFrontMatterSnippet selects existing CRLF YAML front matter", () => {
   assert.equal(result.selectionStart, 0);
   assert.equal(result.selectionEnd, "---\r\ntitle: Existing\r\n---\r\n".length);
 });
+
+test("insertFrontMatterSnippet selects Front Matter closed by the YAML explicit end marker", () => {
+  for (const lineBreak of ["\n", "\r\n"] as const) {
+    const frontMatter = `---${lineBreak}title: Existing${lineBreak}...${lineBreak}`;
+    const source = `${frontMatter}${lineBreak}# Heading`;
+    const result = insertFrontMatterSnippet(source, new Date(2026, 6, 10));
+
+    assert.equal(result.value, source);
+    assert.equal(result.selectionStart, 0);
+    assert.equal(result.selectionEnd, frontMatter.length);
+  }
+});
+
+test("insertFrontMatterSnippet recognizes empty explicit front matter and trailing spaces", () => {
+  for (const source of ["---\n...\n\nBody", "---  \r\n... \t\r\nBody"]) {
+    const result = insertFrontMatterSnippet(source);
+    assert.equal(result.value, source);
+    assert.equal(result.selectionStart, 0);
+    assert.ok(result.selectionEnd > 0);
+  }
+});

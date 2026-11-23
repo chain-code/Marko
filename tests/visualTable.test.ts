@@ -29,6 +29,69 @@ test("visual table parses cells, alignment and source formatting", () => {
   assert.equal(serializeVisualTable(table), source);
 });
 
+test("visual table supports Typora-style single-column tables", () => {
+  const source = "| H |\n| --- |\n| x |";
+  const table = parseVisualTable(source);
+
+  assert.ok(table);
+  assert.deepEqual(table.headers, ["H"]);
+  assert.deepEqual(table.rows, [["x"]]);
+  assert.equal(serializeVisualTable(table), source);
+  assert.equal(resizeVisualTable(table, 1, 0).headers.length, 1);
+  assert.equal(deleteVisualTableColumn(table, 0), table);
+});
+
+test("visual table accepts compact separator cells", () => {
+  const source = "| A | B |\n| - | :-: |\n| 1 | 2 |";
+  const table = parseVisualTable(source);
+
+  assert.ok(table);
+  assert.deepEqual(table.alignments, ["left", "center"]);
+  assert.deepEqual(table.rows, [["1", "2"]]);
+});
+
+test("visual table preserves blockquote prefixes while editing", () => {
+  const source = "> | A | B |\n> | --- | --- |\n> | 1 | 2 |";
+  const table = parseVisualTable(source);
+  assert.ok(table);
+  assert.equal(table.linePrefix, "> ");
+
+  const next = updateVisualTableCell(table, 1, 1, "changed");
+  assert.equal(
+    serializeVisualTable(next),
+    "> | A | B |\n> | --- | --- |\n> | 1 | changed |",
+  );
+});
+
+test("visual table preserves list indentation while editing", () => {
+  const source = "  | A | B |\n  | --- | --- |\n  | 1 | 2 |";
+  const table = parseVisualTable(source);
+  assert.ok(table);
+  assert.equal(table.linePrefix, "  ");
+
+  const next = insertVisualTableRow(table, 1);
+  assert.equal(
+    serializeVisualTable(next),
+    "  | A | B |\n  | --- | --- |\n  | 1 | 2 |\n  |  |  |",
+  );
+});
+
+test("visual table preserves a list marker on a table header", () => {
+  const source = "- | A | B |\n  | --- | --- |\n  | 1 | 2 |";
+  const table = parseVisualTable(source);
+
+  assert.ok(table);
+  assert.deepEqual(table.headers, ["A", "B"]);
+  assert.deepEqual(table.rows, [["1", "2"]]);
+  assert.equal(serializeVisualTable(table), source);
+
+  const next = updateVisualTableCell(table, 1, 1, "changed");
+  assert.equal(
+    serializeVisualTable(next),
+    "- | A | B |\n  | --- | --- |\n  | 1 | changed |",
+  );
+});
+
 test("visual table updates cells and escapes newly entered pipes", () => {
   const table = parseVisualTable("| A | B |\n| --- | --- |\n| 1 | 2 |");
   assert.ok(table);
@@ -52,6 +115,7 @@ test("visual table inserts, deletes and resizes rows and columns", () => {
   assert.deepEqual(withColumn.headers, ["A", "", "B"]);
   assert.deepEqual(withColumn.rows, [["1", "", "2"]]);
   assert.deepEqual(deleteVisualTableColumn(withColumn, 1).headers, ["A", "B"]);
+  assert.deepEqual(deleteVisualTableColumn(table, 1).headers, ["A"]);
 
   const resized = resizeVisualTable(table, 3, 4);
   assert.equal(resized.rows.length, 3);

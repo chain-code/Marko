@@ -19,13 +19,24 @@ interface TestFileEntry {
 const desktop = vi.hoisted(() => ({
   runtime: false,
   closeHandler: null as null | (() => void | Promise<void>),
+  nativeDropHandler: null as null | ((drop: {
+    paths: string[];
+    position: { x: number; y: number };
+  }) => void | Promise<void>),
+  copyImageFileAsset: vi.fn(async (_currentPath: string | null, path: string, _action: string) => path),
+  copyMediaFileAsset: vi.fn(async (_currentPath: string | null, path: string, _action: string) => path),
   createMarkdownFile: vi.fn(async () => "C:/notes/new.md"),
   destroyCurrentWindow: vi.fn(async () => undefined),
   getStartupMarkdownFiles: vi.fn(async () => [] as string[]),
   listMarkdownFolder: vi.fn(async (): Promise<TestFileEntry[]> => []),
+  openBrowserImageFile: vi.fn(async (): Promise<File[]> => []),
   pickFolder: vi.fn(async (): Promise<string | null> => null),
+  pickImageFile: vi.fn(async (): Promise<string[]> => []),
   readTextFile: vi.fn<(path: string) => Promise<string>>(async () => "disk content"),
-  saveMarkdownAs: vi.fn(async (): Promise<string | null> => "C:/notes/saved-as.md"),
+  saveMarkdownAs: vi.fn<(
+    content: string,
+    defaultDir?: string,
+  ) => Promise<string | null>>(async () => "C:/notes/saved-as.md"),
   saveImageAsset: vi.fn(async (_path: string | null, _name: string, dataUrl: string) => dataUrl),
   searchMarkdownFiles: vi.fn<(
     root: string,
@@ -43,17 +54,24 @@ vi.mock("@/services/desktop", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/services/desktop")>();
   return {
     ...original,
+    copyImageFileAsset: desktop.copyImageFileAsset,
+    copyMediaFileAsset: desktop.copyMediaFileAsset,
     createMarkdownFile: desktop.createMarkdownFile,
     destroyCurrentWindow: desktop.destroyCurrentWindow,
     getStartupMarkdownFiles: desktop.getStartupMarkdownFiles,
     isTauriRuntime: () => desktop.runtime,
     listMarkdownFolder: desktop.listMarkdownFolder,
-    listenNativeFileDrops: vi.fn(async () => () => undefined),
+    listenNativeFileDrops: vi.fn(async (handler: NonNullable<typeof desktop.nativeDropHandler>) => {
+      desktop.nativeDropHandler = handler;
+      return () => undefined;
+    }),
     listenWindowCloseRequested: vi.fn(async (handler: () => void | Promise<void>) => {
       desktop.closeHandler = handler;
       return () => undefined;
     }),
+    openBrowserImageFile: desktop.openBrowserImageFile,
     pickFolder: desktop.pickFolder,
+    pickImageFile: desktop.pickImageFile,
     readTextFile: desktop.readTextFile,
     saveMarkdownAs: desktop.saveMarkdownAs,
     saveImageAsset: desktop.saveImageAsset,
@@ -67,8 +85,12 @@ const editor = {
   getViewState: vi.fn(() => ({ anchor: 3, head: 8, scrollTop: 180 })),
   restoreViewState: vi.fn(async () => undefined),
   focus: vi.fn(),
+  jumpToSelection: vi.fn(async () => undefined),
   reserveImageInsertion: vi.fn(() => "<!--marko-image-test-->"),
   replaceImagePlaceholder: vi.fn(() => true),
+  replaceMediaPlaceholder: vi.fn(() => true),
+  setCursorAtCoordinates: vi.fn(() => true),
+  selectRange: vi.fn(async () => undefined),
 };
 
 const EditorStub = defineComponent({
@@ -92,10 +114,10 @@ const EditorStub = defineComponent({
       insertImageMarkdown: vi.fn(),
       insertText: vi.fn(),
       jumpToLine: vi.fn(async () => undefined),
-      jumpToSelection: vi.fn(async () => undefined),
+      jumpToSelection: editor.jumpToSelection,
       replaceDocument: vi.fn(),
       runCommand: vi.fn(),
-      selectRange: vi.fn(async () => undefined),
+      selectRange: editor.selectRange,
     });
     return () => h("div", { class: "editor-stub" });
   },
@@ -127,6 +149,11 @@ beforeEach(() => {
   localStorage.clear();
   desktop.runtime = false;
   desktop.closeHandler = null;
+  desktop.nativeDropHandler = null;
+  desktop.copyImageFileAsset.mockReset();
+  desktop.copyImageFileAsset.mockImplementation(async (_currentPath, path) => path);
+  desktop.copyMediaFileAsset.mockReset();
+  desktop.copyMediaFileAsset.mockImplementation(async (_currentPath, path) => path);
   desktop.createMarkdownFile.mockClear();
   desktop.createMarkdownFile.mockResolvedValue("C:/notes/new.md");
   desktop.destroyCurrentWindow.mockClear();
@@ -134,8 +161,12 @@ beforeEach(() => {
   desktop.getStartupMarkdownFiles.mockResolvedValue([]);
   desktop.listMarkdownFolder.mockClear();
   desktop.listMarkdownFolder.mockResolvedValue([]);
+  desktop.openBrowserImageFile.mockReset();
+  desktop.openBrowserImageFile.mockResolvedValue([]);
   desktop.pickFolder.mockClear();
   desktop.pickFolder.mockResolvedValue(null);
+  desktop.pickImageFile.mockReset();
+  desktop.pickImageFile.mockResolvedValue([]);
   desktop.readTextFile.mockClear();
   desktop.saveMarkdownAs.mockClear();
   desktop.saveMarkdownAs.mockResolvedValue("C:/notes/saved-as.md");
@@ -143,6 +174,8 @@ beforeEach(() => {
   desktop.saveImageAsset.mockImplementation(async (_path, _name, dataUrl) => dataUrl);
   editor.reserveImageInsertion.mockClear();
   editor.replaceImagePlaceholder.mockClear();
+  editor.replaceMediaPlaceholder.mockClear();
+  editor.setCursorAtCoordinates.mockClear();
   desktop.readTextFile.mockResolvedValue("disk content");
   desktop.searchMarkdownFiles.mockClear();
   desktop.searchMarkdownFiles.mockResolvedValue([]);
@@ -152,25 +185,68 @@ beforeEach(() => {
   editor.getViewState.mockClear();
   editor.restoreViewState.mockClear();
   editor.focus.mockClear();
+  editor.jumpToSelection.mockClear();
+  editor.selectRange.mockClear();
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("App", () => {
+  it("stops sidebar resizing on pointer cancellation", async () => {
+    const wrapper = mountApp();
+    await wrapper.get(".sidebar-resizer").trigger("pointerdown", { clientX: 260 });
+
+    expect(document.body.classList.contains("is-resizing-sidebar")).toBe(true);
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 300 }));
+    await nextTick();
+    expect(wrapper.get(".workspace").attributes("style")).toContain("--sidebar-width: 300px");
+    expect(JSON.parse(localStorage.getItem("marko.sidebar.width") ?? "null")).toBe(300);
+
+    window.dispatchEvent(new PointerEvent("pointercancel", { clientX: 300 }));
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 340 }));
+    await nextTick();
+
+    expect(document.body.classList.contains("is-resizing-sidebar")).toBe(false);
+    expect(wrapper.get(".workspace").attributes("style")).toContain("--sidebar-width: 300px");
+    wrapper.unmount();
+  });
+
+  it("cleans up an active sidebar resize when the application unmounts", async () => {
+    const removeEventListener = vi.spyOn(window, "removeEventListener");
+    const wrapper = mountApp();
+    await wrapper.get(".sidebar-resizer").trigger("pointerdown", { clientX: 260 });
+
+    wrapper.unmount();
+
+    expect(document.body.classList.contains("is-resizing-sidebar")).toBe(false);
+    expect(removeEventListener).toHaveBeenCalledWith("pointermove", expect.any(Function));
+    expect(removeEventListener).toHaveBeenCalledWith("pointerup", expect.any(Function));
+    expect(removeEventListener).toHaveBeenCalledWith("pointercancel", expect.any(Function));
+    removeEventListener.mockRestore();
+  });
+
   it("temporarily hides the sidebar in source mode and restores it on exit", async () => {
     const wrapper = mountApp();
-    const toolbar = wrapper.findComponent(AppToolbar);
+    const workspace = wrapper.get(".workspace");
+    const sourceModeButton = wrapper.findAll(".status-controls-left .status-icon")[1];
     expect(wrapper.findComponent(AppSidebar).exists()).toBe(true);
+    expect(workspace.classes()).not.toContain("no-sidebar");
+    expect(sourceModeButton.classes()).not.toContain("active");
 
-    toolbar.vm.$emit("toggleSource");
+    await sourceModeButton.trigger("click");
     await nextTick();
     expect(wrapper.findComponent(AppSidebar).exists()).toBe(false);
+    expect(workspace.classes()).toContain("no-sidebar");
+    expect(sourceModeButton.classes()).toContain("active");
 
-    toolbar.vm.$emit("toggleSource");
+    await sourceModeButton.trigger("click");
     await nextTick();
     expect(wrapper.findComponent(AppSidebar).exists()).toBe(true);
+    expect(workspace.classes()).not.toContain("no-sidebar");
+    expect(sourceModeButton.classes()).not.toContain("active");
     wrapper.unmount();
   });
 
@@ -235,6 +311,26 @@ describe("App", () => {
     await flushPromises();
 
     expect(editor.restoreViewState).toHaveBeenLastCalledWith({ anchor: 3, head: 8, scrollTop: 180 });
+    wrapper.unmount();
+  });
+
+  it("opens a linked Markdown file and jumps to its heading fragment", async () => {
+    desktop.runtime = true;
+    storeSession("Current", "Current", "C:/notes/current.md");
+    desktop.readTextFile.mockImplementation(async (path: string) => (
+      path === "C:/notes/guide.md" ? "# Install\n\nDetails" : "Current"
+    ));
+    const wrapper = mountApp();
+    await flushPromises();
+    editor.selectRange.mockClear();
+    editor.jumpToSelection.mockClear();
+
+    wrapper.findComponent(EditorStub).vm.$emit("openLinkHref", "guide.md#install");
+    await flushPromises();
+
+    expect(wrapper.findComponent(EditorStub).props("filePath")).toBe("C:/notes/guide.md");
+    expect(editor.selectRange).toHaveBeenCalledWith(0, "# Install".length);
+    expect(editor.jumpToSelection).toHaveBeenCalled();
     wrapper.unmount();
   });
 
@@ -516,13 +612,249 @@ describe("App", () => {
     await nextTick();
 
     expect(wrapper.findComponent(EditorStub).props("modelValue")).toBe("saved");
-    expect(editor.replaceImagePlaceholder).not.toHaveBeenCalled();
+    expect(editor.replaceMediaPlaceholder).not.toHaveBeenCalled();
     resolveImage?.("data:image/png;base64,AA==");
     await flushPromises();
-    expect(editor.replaceImagePlaceholder).toHaveBeenCalledWith(
+    expect(editor.replaceMediaPlaceholder).toHaveBeenCalledWith(
       "<!--marko-image-test-->",
-      "data:image/png;base64,AA==",
-      "photo.png",
+      "![photo](data:image/png;base64,AA==)",
+    );
+    wrapper.unmount();
+  });
+
+  it("inserts multiple Tauri image selections in order after reserving every placeholder", async () => {
+    desktop.runtime = true;
+    desktop.pickImageFile.mockResolvedValue([
+      "C:/images/one.png",
+      "C:/images/two.png",
+    ]);
+    editor.reserveImageInsertion
+      .mockReturnValueOnce("<!--marko-image-one-->")
+      .mockReturnValueOnce("<!--marko-image-two-->");
+    let resolveFirstCopy: ((value: string) => void) | undefined;
+    desktop.copyImageFileAsset
+      .mockImplementationOnce(() => new Promise<string>((resolve) => {
+        resolveFirstCopy = resolve;
+      }))
+      .mockResolvedValueOnce("assets/two.png");
+    const wrapper = mountApp();
+    await flushPromises();
+
+    wrapper.findComponent(AppToolbar).vm.$emit("insertImageFile");
+    await flushPromises();
+
+    expect(editor.reserveImageInsertion).toHaveBeenCalledTimes(2);
+    expect(desktop.copyImageFileAsset.mock.calls.map((call) => call[1])).toEqual([
+      "C:/images/one.png",
+    ]);
+    expect(editor.replaceMediaPlaceholder).not.toHaveBeenCalled();
+
+    resolveFirstCopy?.("assets/one.png");
+    await flushPromises();
+
+    expect(desktop.copyImageFileAsset.mock.calls.map((call) => call[1])).toEqual([
+      "C:/images/one.png",
+      "C:/images/two.png",
+    ]);
+    expect(editor.replaceMediaPlaceholder.mock.calls).toEqual([
+      ["<!--marko-image-one-->", "![one](assets/one.png)"],
+      ["<!--marko-image-two-->", "\n\n![two](assets/two.png)"],
+    ]);
+    wrapper.unmount();
+  });
+
+  it("inserts multiple browser image selections in order after reserving every placeholder", async () => {
+    const files = [
+      new File(["one"], "one.png", { type: "image/png" }),
+      new File(["two"], "two.png", { type: "image/png" }),
+    ];
+    desktop.openBrowserImageFile.mockResolvedValue(files);
+    editor.reserveImageInsertion
+      .mockReturnValueOnce("<!--marko-image-one-->")
+      .mockReturnValueOnce("<!--marko-image-two-->");
+    let resolveFirstSave: ((value: string) => void) | undefined;
+    desktop.saveImageAsset
+      .mockImplementationOnce(() => new Promise<string>((resolve) => {
+        resolveFirstSave = resolve;
+      }))
+      .mockResolvedValueOnce("assets/two.png");
+    const wrapper = mountApp();
+    await flushPromises();
+
+    wrapper.findComponent(AppToolbar).vm.$emit("insertImageFile");
+    await flushPromises();
+
+    expect(editor.reserveImageInsertion).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => {
+      expect(desktop.saveImageAsset).toHaveBeenCalledTimes(1);
+    });
+    expect(desktop.saveImageAsset.mock.calls.map((call) => call[1])).toEqual(["one.png"]);
+    expect(editor.replaceMediaPlaceholder).not.toHaveBeenCalled();
+
+    resolveFirstSave?.("assets/one.png");
+    await flushPromises();
+    await vi.waitFor(() => {
+      expect(desktop.saveImageAsset).toHaveBeenCalledTimes(2);
+    });
+
+    expect(desktop.saveImageAsset.mock.calls.map((call) => call[1])).toEqual([
+      "one.png",
+      "two.png",
+    ]);
+    expect(editor.replaceMediaPlaceholder.mock.calls).toEqual([
+      ["<!--marko-image-one-->", "![one](assets/one.png)"],
+      ["<!--marko-image-two-->", "\n\n![two](assets/two.png)"],
+    ]);
+    wrapper.unmount();
+  });
+
+  it("saves an untitled document once before concurrent local media insertions", async () => {
+    desktop.runtime = true;
+    storeSession("draft", "draft", "");
+    let resolveSave: ((value: string | null) => void) | undefined;
+    desktop.saveMarkdownAs.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSave = resolve;
+    }));
+    desktop.saveImageAsset.mockImplementation(async (_path, name) => `assets/${name}`);
+    editor.reserveImageInsertion
+      .mockReturnValueOnce("<!--marko-image-video-->")
+      .mockReturnValueOnce("<!--marko-image-audio-->");
+    const wrapper = mountApp();
+    await flushPromises();
+
+    const editorWrapper = wrapper.findComponent(EditorStub);
+    editorWrapper.vm.$emit("imageData", {
+      name: "demo.mp4",
+      file: new File(["video"], "demo.mp4", { type: "video/mp4" }),
+      kind: "video",
+    });
+    editorWrapper.vm.$emit("imageData", {
+      name: "voice.mp3",
+      file: new File(["audio"], "voice.mp3", { type: "audio/mpeg" }),
+      kind: "audio",
+      prefix: "\n\n",
+    });
+    await nextTick();
+
+    expect(desktop.saveMarkdownAs).toHaveBeenCalledTimes(1);
+    expect(desktop.saveMarkdownAs.mock.calls[0]?.[0]).toBe("draft");
+    expect(editor.reserveImageInsertion).not.toHaveBeenCalled();
+
+    resolveSave?.("C:/notes/saved.md");
+    await flushPromises();
+    await vi.waitFor(() => {
+      expect(editor.replaceMediaPlaceholder).toHaveBeenCalledTimes(2);
+    });
+
+    expect(desktop.saveMarkdownAs).toHaveBeenCalledTimes(1);
+    expect(editor.reserveImageInsertion).toHaveBeenCalledTimes(2);
+    expect(desktop.saveImageAsset.mock.calls.map((call) => [call[0], call[1]])).toEqual([
+      ["C:/notes/saved.md", "demo.mp4"],
+      ["C:/notes/saved.md", "voice.mp3"],
+    ]);
+    expect(editor.replaceMediaPlaceholder.mock.calls).toEqual([
+      ["<!--marko-image-video-->", '<video src="assets/demo.mp4" controls></video>'],
+      ["<!--marko-image-audio-->", '\n\n<audio src="assets/voice.mp3" controls></audio>'],
+    ]);
+    wrapper.unmount();
+  });
+
+  it("uploads an untitled image without forcing the document save flow", async () => {
+    desktop.runtime = true;
+    storeSession("draft", "draft", "");
+    localStorage.setItem("marko.editor.settings", JSON.stringify({
+      uploadUrl: "https://upload.example/images",
+    }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ blob: async () => new Blob(["image"], { type: "image/png" }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ url: "https://cdn.example/photo.png" }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const wrapper = mountApp();
+    await flushPromises();
+
+    wrapper.findComponent(EditorStub).vm.$emit("imageData", {
+      name: "photo.png",
+      dataUrl: "data:image/png;base64,AA==",
+      placeholder: "<!--marko-image-upload-->",
+      kind: "image",
+    });
+    await flushPromises();
+
+    expect(desktop.saveMarkdownAs).not.toHaveBeenCalled();
+    expect(desktop.saveImageAsset).not.toHaveBeenCalled();
+    expect(editor.replaceMediaPlaceholder).toHaveBeenCalledWith(
+      "<!--marko-image-upload-->",
+      "![photo](https://cdn.example/photo.png)",
+    );
+    wrapper.unmount();
+  });
+
+  it("uploads an image dropped outside the editor without forcing save", async () => {
+    desktop.runtime = true;
+    storeSession("draft", "draft", "");
+    localStorage.setItem("marko.editor.settings", JSON.stringify({
+      uploadUrl: "https://upload.example/images",
+    }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ blob: async () => new Blob(["image"], { type: "image/png" }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => "https://cdn.example/root-drop.png",
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const wrapper = mountApp();
+    await flushPromises();
+    editor.reserveImageInsertion.mockReturnValueOnce("<!--marko-image-root-drop-->");
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, "clientX", { value: 410 });
+    Object.defineProperty(drop, "clientY", { value: 260 });
+    Object.defineProperty(drop, "dataTransfer", {
+      value: { files: [new File(["image"], "root.png", { type: "image/png" })] },
+    });
+
+    wrapper.get(".app-shell").element.dispatchEvent(drop);
+    await flushPromises();
+    await vi.waitFor(() => {
+      expect(editor.replaceMediaPlaceholder).toHaveBeenCalled();
+    });
+
+    expect(desktop.saveMarkdownAs).not.toHaveBeenCalled();
+    expect(editor.setCursorAtCoordinates).toHaveBeenCalledWith(410, 260);
+    expect(editor.replaceMediaPlaceholder).toHaveBeenCalledWith(
+      "<!--marko-image-root-drop-->",
+      "![root](https://cdn.example/root-drop.png)",
+    );
+    wrapper.unmount();
+  });
+
+  it("uses the native drop coordinates and copies video into document assets", async () => {
+    desktop.runtime = true;
+    storeSession("saved", "saved", "C:/notes/a.md");
+    desktop.copyMediaFileAsset.mockResolvedValue("assets/demo.webm");
+    editor.reserveImageInsertion.mockReturnValueOnce("<!--marko-image-video-->");
+    const wrapper = mountApp();
+    await flushPromises();
+
+    await desktop.nativeDropHandler?.({
+      paths: ["C:/media/demo.webm"],
+      position: { x: 320, y: 240 },
+    });
+    await flushPromises();
+
+    expect(editor.setCursorAtCoordinates).toHaveBeenCalledWith(320, 240);
+    expect(desktop.copyMediaFileAsset).toHaveBeenCalledWith(
+      "C:/notes/a.md",
+      "C:/media/demo.webm",
+      "assets",
+    );
+    expect(editor.replaceMediaPlaceholder).toHaveBeenCalledWith(
+      "<!--marko-image-video-->",
+      '<video src="assets/demo.webm" controls></video>',
     );
     wrapper.unmount();
   });

@@ -129,6 +129,7 @@ import {
   Check,
   CheckSquare,
   ChevronRight,
+  CircleAlert,
   ClipboardPaste,
   Code,
   Code2,
@@ -153,7 +154,9 @@ import {
   Image,
   IndentDecrease,
   IndentIncrease,
+  Info,
   Italic,
+  Lightbulb,
   LocateFixed,
   Link,
   List,
@@ -164,6 +167,7 @@ import {
   MessageSquareCode,
   Minus,
   NotebookText,
+  OctagonAlert,
   Palette,
   PanelLeft,
   PencilLine,
@@ -186,6 +190,7 @@ import {
   Superscript,
   Table2,
   TextCursorInput,
+  TriangleAlert,
   Trash2,
   Trash,
   Underline,
@@ -272,7 +277,7 @@ const emit = defineEmits<{
   saveAs: [];
   renameFile: [];
   insertImageFile: [];
-  command: [command: EditorCommand];
+  command: [command: EditorCommand, payload?: string];
   find: [];
   findNext: [];
   findPrevious: [];
@@ -466,11 +471,18 @@ const menus = computed<MenuGroup[]>(() => [
       action("分割线", Minus, () => emit("command", "hr")),
       action("目录 [TOC]", ListTree, () => emit("command", "toc")),
       action("YAML Front Matter", Code, () => emit("command", "frontmatter")),
-      action("Callout / Alert", MessageSquareWarning, () => emit("command", "callout")),
+      submenu("Callout / Alert", MessageSquareWarning, [
+        action("Note", Info, () => emit("command", "callout", "NOTE")),
+        action("Tip", Lightbulb, () => emit("command", "callout", "TIP")),
+        action("Important", CircleAlert, () => emit("command", "callout", "IMPORTANT")),
+        action("Warning", TriangleAlert, () => emit("command", "callout", "WARNING")),
+        action("Caution", OctagonAlert, () => emit("command", "callout", "CAUTION")),
+      ]),
       separator,
       submenu("图表", GitBranch, [
         action("Mermaid 图表", GitBranch, () => emit("command", "mermaid")),
         action("Flowchart 图表", Workflow, () => emit("command", "flowchart")),
+        action("Sequence 时序图", Workflow, () => emit("command", "sequence")),
       ]),
     ],
   },
