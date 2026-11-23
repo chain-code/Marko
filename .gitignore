@@ -6,3 +6,6 @@ src-tauri/gen/
 .tmp-tests/
 .DS_Store
 *.log
+
+# 本地临时文件（审计截图、浏览器 profile、vite 日志等）
+.tmp-*

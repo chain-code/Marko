@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.app.json",
+  "include": ["env.d.ts", "src/**/*", "src/**/*.vue"],
+  "exclude": ["src/main.ts", "src/App.vue"],
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationDir": "./dist-lib",
+    "types": ["node"]
+  }
+}
