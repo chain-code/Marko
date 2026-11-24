@@ -1,0 +1,9 @@
+{
+  "//": "主进程、预加载脚本和构建配置",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "include": ["main/**/*", "preload/**/*", "electron.vite.config.ts"]
+}

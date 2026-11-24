@@ -1,0 +1,28 @@
+{
+  "name": "@marko/editor-vue",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "编辑器的 Vue 包装和周边界面（对外发布）",
+  "exports": {
+    ".": "./src/index.ts",
+    "./internal": "./src/internal.ts",
+    "./style.css": "./src/style.css"
+  },
+  "scripts": {
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@codemirror/language-data": "^6.5.2",
+    "@element-plus/icons-vue": "^2.3.2",
+    "@marko/editor": "*",
+    "@marko/markdown": "*",
+    "@marko/render": "*",
+    "@marko/themes": "*",
+    "element-plus": "^2.14.8"
+  },
+  "peerDependencies": {
+    "vue": "^3.5.0"
+  }
+}

@@ -1,0 +1,36 @@
+name: CI
+
+# 每个 PR 和推到 main 的提交都跑全部测试（docs/architecture.md 1.13 节）。
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: 测试
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # 装依赖时 prepare 会构建编辑器库（K-1，同用 git 依赖安装时的流程）
+      - run: npm ci
+      # 类型检查、依赖方向（1.4 节）
+      - run: npm run check
+      # 各包的单元测试、行为规格、组件测试
+      - run: npm test
+      # 桌面应用：构建后用 Playwright 跑端到端测试
+      - run: npm run test:e2e
+      # 编辑器的交互测试：测试页 + Playwright（本机 Edge），点击、拖选、输入法、NodeView、gapcursor
+      - run: npm run test:interaction

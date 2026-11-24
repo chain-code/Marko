@@ -1,0 +1,13 @@
+{
+  "name": "@marko/themes",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "排版基础、编辑时才有的样式、内置主题（纯 CSS）",
+  "exports": {
+    "./base.css": "./base.css",
+    "./editor.css": "./editor.css",
+    "./ui.css": "./ui.css",
+    "./themes/*": "./themes/*"
+  }
+}

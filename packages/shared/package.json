@@ -1,0 +1,17 @@
+{
+  "name": "@marko/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "主进程和渲染进程共用的类型和 schema",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
+}

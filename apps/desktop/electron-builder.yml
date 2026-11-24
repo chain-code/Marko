@@ -1,0 +1,108 @@
+# 安装包（R 章）。Electron Fuses 和文件关联见 docs/architecture.md 1.10 节、docs/features.md F-14
+appId: com.chaincode.marko
+productName: Marko
+copyright: Copyright © 2026 chain-code
+directories:
+  output: release
+  buildResources: build
+# R-1：每个安装包配一个 SHA-256 校验文件
+afterAllArtifactBuild: build/checksums.cjs
+# 主进程纯 JS 的依赖由 electron-vite 打进 out/（electron.vite.config.ts）；工作区根目录 node_modules 里的东西不整个带进来。
+# 只有两个保持外部引用：@parcel/watcher（原生模块，W-2）、@vscode/ripgrep（带可执行文件，W-5）——
+# 连同它们运行时要的几个小包，从工作区根目录的 node_modules 原样带上；各平台的二进制子包在下面各平台的 files 里
+files:
+  - out/**
+  - package.json
+  - "!node_modules/**"
+  - from: ../../node_modules/@parcel/watcher
+    to: node_modules/@parcel/watcher
+    filter: [package.json, index.js, wrapper.js, LICENSE]
+  - from: ../../node_modules/picomatch
+    to: node_modules/picomatch
+    filter: [package.json, index.js, posix.js, lib/**, LICENSE]
+  - from: ../../node_modules/is-glob
+    to: node_modules/is-glob
+    filter: [package.json, index.js, LICENSE]
+  - from: ../../node_modules/is-extglob
+    to: node_modules/is-extglob
+    filter: [package.json, index.js, LICENSE]
+  - from: ../../node_modules/detect-libc
+    to: node_modules/detect-libc
+    filter: [package.json, lib/**, LICENSE]
+  - from: ../../node_modules/@vscode/ripgrep
+    to: node_modules/@vscode/ripgrep
+    filter: [package.json, lib/**, LICENSE]
+# 原生模块、ripgrep 的可执行文件要在 asar 外面才能加载、运行（search.ts 按 app.asar.unpacked 找 rg）。
+# 按文件名匹配：从工作区根目录拷进来的文件，electron-builder 算不出它们在应用里的相对路径（按应用目录的长度截字符串）
+asarUnpack:
+  - "**/*.node"
+  - "**/rg.exe"
+  - "**/rg"
+asar: true
+# R-4：更新源是 GitHub Releases（生成 latest.yml、安装包里带上 app-update.yml）；本地打包不发布（dist 脚本 --publish never）
+publish:
+  provider: github
+  owner: chain-code
+  repo: Marko
+# @parcel/watcher 用的是 N-API，预编译的二进制 Electron 直接能用，不用按 Electron 重新编译
+npmRebuild: false
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+fileAssociations:
+  - ext: [md, markdown, mdown, mkd, mkdn, mdwn, mdtxt, mdtext, rmd]
+    name: Markdown Document
+    description: Markdown Document
+    mimeType: text/markdown
+    role: Editor
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.ico
+  files:
+    - from: ../../node_modules/@parcel/watcher-win32-x64
+      to: node_modules/@parcel/watcher-win32-x64
+    - from: ../../node_modules/@vscode/ripgrep-win32-x64
+      to: node_modules/@vscode/ripgrep-win32-x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  artifactName: ${productName}-${version}-x64-setup.${ext}
+deb:
+  packageName: marko
+mac:
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  category: public.app-category.productivity
+  icon: build/icon.icns
+  files:
+    - from: ../../node_modules/@parcel/watcher-darwin-arm64
+      to: node_modules/@parcel/watcher-darwin-arm64
+    - from: ../../node_modules/@vscode/ripgrep-darwin-arm64
+      to: node_modules/@vscode/ripgrep-darwin-arm64
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  category: Office
+  icon: build/icons
+  mimeTypes: [text/markdown]
+  # 包名是 @marko/desktop：可执行文件、deb 的包名不能按它取（R-3）。deb 要维护者，没有它时找作者的邮箱
+  executableName: marko
+  maintainer: chain-code
+  files:
+    - from: ../../node_modules/@parcel/watcher-linux-x64-glibc
+      to: node_modules/@parcel/watcher-linux-x64-glibc
+    - from: ../../node_modules/@vscode/ripgrep-linux-x64
+      to: node_modules/@vscode/ripgrep-linux-x64

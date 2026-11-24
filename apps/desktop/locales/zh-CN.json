@@ -1,0 +1,714 @@
+{
+  "meta": {
+    "name": "中文"
+  },
+  "app": {
+    "name": "Marko",
+    "tagline": "本地优先的 Markdown 编辑器",
+    "version": "版本 {version}",
+    "license": "MIT 许可证 · © 2026 chain-code",
+    "untitledFile": "未命名.md",
+    "untitled": "未命名"
+  },
+  "common": {
+    "ok": "确定",
+    "cancel": "取消",
+    "close": "关闭",
+    "open": "打开",
+    "save": "保存",
+    "dontSave": "不保存",
+    "saveAs": "另存为...",
+    "remove": "移除",
+    "clear": "清除",
+    "done": "完成",
+    "search": "搜索",
+    "notFound": "没有找到",
+    "badRegex": "正则写错了",
+    "caseSensitive": "区分大小写",
+    "wholeWord": "全词匹配",
+    "regex": "正则表达式",
+    "openFolder": "打开文件夹...",
+    "fileManager": {
+      "mac": "访达",
+      "windows": "资源管理器",
+      "linux": "文件管理器"
+    }
+  },
+  "menu": {
+    "app": {
+      "about": "关于 Marko",
+      "preferences": "偏好设置...",
+      "hide": "隐藏 Marko",
+      "hideOthers": "隐藏其他",
+      "unhide": "全部显示",
+      "quit": "退出 Marko"
+    },
+    "file": {
+      "title": "文件",
+      "new": "新建",
+      "newWindow": "新建窗口",
+      "open": "打开...",
+      "openFolder": "打开文件夹...",
+      "workspace": "工作区",
+      "openFolderAsWorkspace": "打开所在文件夹为工作区",
+      "refreshWorkspace": "刷新工作区文件夹",
+      "closeWorkspace": "关闭工作区文件夹",
+      "quickOpen": "快速打开...",
+      "recent": "打开最近",
+      "recentNone": "（无）",
+      "showRecent": "显示最近文件...",
+      "clearRecent": "清空最近文件",
+      "save": "保存",
+      "saveAs": "另存为...",
+      "reload": "重新载入",
+      "reopenWithEncoding": "以其他编码重新打开",
+      "operations": "文件操作",
+      "rename": "重命名...",
+      "copyPath": "复制文件路径",
+      "reveal": "在{manager}中显示",
+      "openContainingFolder": "打开所在文件夹",
+      "import": "导入...",
+      "export": "导出",
+      "exportLast": "按上次的格式导出",
+      "print": "打印...",
+      "close": "关闭",
+      "quit": "退出"
+    },
+    "export": {
+      "html": "HTML",
+      "htmlPlain": "HTML（不含样式）",
+      "pdf": "PDF",
+      "png": "图片（PNG）",
+      "docx": "Word（.docx）",
+      "odt": "OpenDocument（.odt）",
+      "rtf": "RTF",
+      "epub": "EPUB",
+      "latex": "LaTeX",
+      "rst": "reStructuredText",
+      "mediawiki": "MediaWiki"
+    },
+    "edit": {
+      "title": "编辑",
+      "undo": "撤销",
+      "redo": "重做",
+      "cut": "剪切",
+      "copy": "复制",
+      "paste": "粘贴",
+      "pastePlainText": "粘贴为纯文本",
+      "selectAll": "全选",
+      "spellcheck": "拼写检查",
+      "find": "查找",
+      "findNext": "查找下一个",
+      "findPrevious": "查找上一个",
+      "replace": "替换"
+    },
+    "paragraph": {
+      "title": "段落",
+      "paragraph": "正文",
+      "heading1": "一级标题",
+      "heading2": "二级标题",
+      "heading3": "三级标题",
+      "heading4": "四级标题",
+      "heading5": "五级标题",
+      "heading6": "六级标题",
+      "increaseHeading": "提升标题级别",
+      "decreaseHeading": "降低标题级别",
+      "table": "表格",
+      "insertTable": "插入表格...",
+      "addRowAbove": "在上方插入行",
+      "addRowBelow": "在下方插入行",
+      "moveRowUp": "上移行",
+      "moveRowDown": "下移行",
+      "deleteRow": "删除行",
+      "addColumnLeft": "在左侧插入列",
+      "addColumnRight": "在右侧插入列",
+      "moveColumnLeft": "左移列",
+      "moveColumnRight": "右移列",
+      "deleteColumn": "删除列",
+      "selectCell": "选择单元格",
+      "selectRow": "选择行",
+      "selectColumn": "选择列",
+      "selectTable": "选择表格",
+      "deleteTable": "删除表格",
+      "alignLeft": "左对齐",
+      "alignCenter": "居中",
+      "alignRight": "右对齐",
+      "codeBlock": "代码块",
+      "mathBlock": "公式块",
+      "blockquote": "引用",
+      "orderedList": "有序列表",
+      "bulletList": "无序列表",
+      "taskList": "任务列表",
+      "definitionList": "定义列表",
+      "toggleTask": "切换任务状态",
+      "indent": "增加缩进",
+      "outdent": "减少缩进",
+      "insertParagraphAbove": "在上方插入段落",
+      "insertParagraphBelow": "在下方插入段落",
+      "footnote": "脚注",
+      "hr": "分割线",
+      "toc": "目录 [TOC]",
+      "frontMatter": "YAML Front Matter",
+      "callout": "Callout",
+      "diagram": "图表"
+    },
+    "format": {
+      "title": "格式",
+      "bold": "加粗",
+      "italic": "斜体",
+      "underline": "下划线",
+      "strike": "删除线",
+      "inlineCode": "行内代码",
+      "inlineMath": "行内公式",
+      "link": "链接",
+      "openLink": "打开链接",
+      "image": "图片",
+      "insertImage": "插入图片",
+      "insertLocalImage": "插入本地图片...",
+      "imageWidth": "设置图片宽度...",
+      "highlight": "高亮",
+      "superscript": "上标",
+      "subscript": "下标",
+      "comment": "注释",
+      "clearFormat": "清除格式"
+    },
+    "view": {
+      "title": "显示",
+      "sourceMode": "源码模式",
+      "focusMode": "专注模式",
+      "typewriterMode": "打字机模式",
+      "sidebar": "显示 / 隐藏侧栏",
+      "outline": "大纲",
+      "fileList": "文件列表",
+      "fileTree": "文件树",
+      "revealInTree": "在文件树中定位",
+      "search": "搜索",
+      "wordCount": "字数统计...",
+      "actualSize": "实际大小",
+      "zoomIn": "放大",
+      "zoomOut": "缩小",
+      "fullscreen": "全屏",
+      "alwaysOnTop": "窗口置顶"
+    },
+    "theme": {
+      "title": "主题",
+      "followSystem": "跟随系统深浅色",
+      "openFolder": "打开主题文件夹"
+    },
+    "help": {
+      "title": "帮助",
+      "about": "关于 Marko",
+      "checkUpdates": "检查更新...",
+      "devTools": "开发者工具"
+    }
+  },
+  "contextMenu": {
+    "learnSpelling": "加入词典",
+    "copyLink": "复制链接地址",
+    "copyImage": "复制图片"
+  },
+  "themes": {
+    "solo": "SoloLog 浅色",
+    "dark": "SoloLog 深色"
+  },
+  "dialog": {
+    "markdownFiles": "Markdown",
+    "textFiles": "文本文件",
+    "allFiles": "所有文件",
+    "images": "图片",
+    "videos": "视频",
+    "audio": "音频",
+    "pngImage": "PNG 图片",
+    "importFiles": "Word、HTML、EPUB、LaTeX、OpenDocument"
+  },
+  "error": {
+    "notFound": "文件不存在",
+    "noPermission": "没有权限读写这个文件",
+    "isFolder": "这是一个文件夹",
+    "exists": "已经有同名的文件或文件夹了",
+    "fileExists": "已经有同名的文件了",
+    "invalidArgument": "参数不对",
+    "outOfScope": "这个文件不在打开过的范围里",
+    "conflict": "文件已被其他程序修改",
+    "imageTooTall": "文档太长（{height} 像素），导出成一张图片放不下，请导出成 PDF",
+    "printFailed": "打印失败",
+    "pandocMissing": "没有找到 Pandoc。导出 Word 这些格式、导入文档要先安装 Pandoc（{url}），也可以在「偏好设置 → 导出」里指定它的路径",
+    "pandocFormat": "Pandoc 不导出这种格式：{format}",
+    "pandocFailed": "Pandoc 出错（{code}）：{message}",
+    "uploadNoEndpoint": "没有填上传接口的地址",
+    "uploadHttp": "上传失败：HTTP {status}",
+    "uploadNoUrl": "上传接口没有返回图片的网址",
+    "uploadNoCommand": "没有填上传命令",
+    "uploadTimeout": "上传命令运行超时",
+    "uploadCommandNoUrl": "上传命令的输出里没有网址",
+    "uploadCommandFailed": "上传命令出错（{code}）：{message}",
+    "documentNotSaved": "文档还没有保存",
+    "encryptionUnavailable": "系统不支持加密保存，Token 没有保存"
+  },
+  "document": {
+    "deletedTitle": "{title}（已删除）",
+    "failed": "{action}失败：{message}",
+    "action": {
+      "save": "保存",
+      "saveAs": "另存",
+      "reload": "重新载入",
+      "open": "打开"
+    },
+    "reloaded": "「{name}」在外部被修改，已重新载入",
+    "imported": "已导入「{name}」",
+    "draftRestored": "已从草稿恢复「{name}」"
+  },
+  "confirm": {
+    "unsaved": "「{title}」有没保存的改动，要保存吗？",
+    "conflict": {
+      "title": "文件已被其他程序修改",
+      "message": "「{title}」在打开以后被其他程序修改过。要怎么做？",
+      "overwrite": "覆盖",
+      "reload": "载入磁盘上的版本"
+    },
+    "externalChange": {
+      "title": "文件已在外部修改",
+      "message": "「{title}」被其他程序修改了，而这里有没保存的改动。要怎么做？",
+      "keep": "保留我的改动",
+      "reload": "载入磁盘上的版本"
+    },
+    "draftConflict": {
+      "title": "恢复草稿",
+      "message": "「{title}」有上次没保存的草稿，但文件在这期间被修改过。要用哪个？",
+      "draft": "用草稿",
+      "disk": "用磁盘上的版本"
+    },
+    "trash": {
+      "title": "移到回收站",
+      "message": "要把「{name}」移到回收站吗？"
+    },
+    "recentMissing": {
+      "title": "打不开最近的文件",
+      "message": "{message}：\n{path}\n\n要从最近文件里去掉它吗？",
+      "remove": "去掉",
+      "keep": "保留"
+    }
+  },
+  "files": {
+    "name": "名字",
+    "invalidName": "名字里不能有 < > : \" / \\ {'|'} ? *",
+    "failed": "{action}失败：{message}",
+    "newFile": "新建 Markdown 文件",
+    "newFileMenu": "新建 Markdown 文件...",
+    "newFolder": "新建文件夹",
+    "newFolderMenu": "新建文件夹...",
+    "create": "新建",
+    "rename": "重命名",
+    "renameMenu": "重命名...",
+    "trash": "移到回收站",
+    "trashMenu": "移到回收站...",
+    "refresh": "刷新文件夹",
+    "openAsWorkspace": "作为工作区打开",
+    "open": "打开",
+    "copyName": "复制名称",
+    "copyRelativePath": "复制相对路径",
+    "copyPath": "复制路径",
+    "copyMarkdownLink": "复制 Markdown 链接",
+    "openIn": "在{manager}中打开",
+    "revealIn": "在{manager}中显示",
+    "openContainingFolder": "打开所在文件夹",
+    "removeRecent": "从最近文件移除",
+    "copied": {
+      "name": "已复制名称",
+      "relativePath": "已复制相对路径",
+      "path": "已复制路径",
+      "markdownLink": "已复制 Markdown 链接",
+      "filePath": "已复制文件路径"
+    },
+    "notSaved": "新文档还没有保存到磁盘"
+  },
+  "encodings": {
+    "utf-8": "Unicode（UTF-8）",
+    "utf-16le": "Unicode（UTF-16 LE）",
+    "utf-16be": "Unicode（UTF-16 BE）",
+    "gb18030": "简体中文（GB18030）",
+    "big5": "繁体中文（Big5）",
+    "shift_jis": "日文（Shift_JIS）",
+    "euc-jp": "日文（EUC-JP）",
+    "euc-kr": "韩文（EUC-KR）",
+    "windows-1252": "西欧（Windows-1252）",
+    "iso-8859-1": "西欧（ISO-8859-1）",
+    "windows-1251": "西里尔文（Windows-1251）",
+    "koi8-r": "西里尔文（KOI8-R）"
+  },
+  "drop": {
+    "open": "松开以打开",
+    "insert": "松开以插入"
+  },
+  "link": {
+    "unsupported": "不能打开这种链接：{url}",
+    "unsavedRelative": "新文档还没有保存，打不开相对路径的链接",
+    "confirmSystem": "用系统默认的程序打开「{name}」？",
+    "openWithSystem": "打开"
+  },
+  "find": {
+    "placeholder": "查找",
+    "previous": "上一个",
+    "next": "下一个",
+    "replaceWith": "替换为",
+    "replace": "替换",
+    "replaceAll": "全部替换",
+    "position": "第 {current} 个，共 {total} 个",
+    "count": "共 {total} 个"
+  },
+  "search": {
+    "needFolder": "先打开一个文件夹，再在里面搜索",
+    "placeholder": "在工作区里搜索",
+    "searchingCount": "搜索中…已找到 {total} 处",
+    "searching": "搜索中…",
+    "summary": "{files} 个文件中找到 {total} 处",
+    "cancelledWith": "已取消，{summary}",
+    "cancelled": "已取消",
+    "truncated": "{summary}（太多了，只列出前 {total} 处）",
+    "fileTruncated": "这个文件里太多了，只列出前 {count} 行",
+    "failed": "搜索失败：{message}",
+    "error": "搜索出错：{message}"
+  },
+  "sidebar": {
+    "files": "文件",
+    "tree": "树",
+    "list": "列表",
+    "noFolder": "还没有打开文件夹",
+    "outline": "大纲",
+    "search": "搜索",
+    "noMarkdown": "没有 Markdown 文件",
+    "noHeadings": "没有标题",
+    "emptyHeading": "（空标题）",
+    "openFolderFailed": "打开文件夹失败：{message}",
+    "notInWorkspace": "当前文件不在工作区里"
+  },
+  "quickOpen": {
+    "placeholderWorkspace": "输入文件名，在工作区里找",
+    "placeholderRecent": "输入文件名，在最近文件里找",
+    "emptyWorkspace": "工作区里没有 Markdown 文件",
+    "emptyRecent": "没有最近文件"
+  },
+  "recent": {
+    "title": "最近文件",
+    "removeLabel": "从最近文件移除 {name}",
+    "empty": "没有最近文件"
+  },
+  "status": {
+    "notSaved": "尚未保存到磁盘",
+    "uncertainEncoding": "编码识别不出，按 UTF-8 打开；可以「文件 → 以其他编码重新打开」",
+    "words": "{words} 词",
+    "selectedWords": "已选 {words} 词"
+  },
+  "wordCount": {
+    "title": "字数统计",
+    "words": "词数",
+    "characters": "字符数（不算空白）",
+    "paragraphs": "段落数",
+    "readingTime": "阅读时间",
+    "readingValue": "约 {minutes} 分钟（每分钟 {speed} 词）",
+    "selection": "选中",
+    "selectionValue": "{words} 词，{chars} 个字符，{lines} 行",
+    "cursor": "光标",
+    "cursorValue": "第 {line} 行，第 {column} 列"
+  },
+  "image": {
+    "widthTitle": "设置图片宽度",
+    "widthMessage": "宽度：数字按像素，也可以写 50%、20em 这样带单位的",
+    "widthInvalid": "写数字，或者带单位（px、%、em、rem、vw）",
+    "noImage": "把光标放在图片上再设置宽度"
+  },
+  "export": {
+    "failed": "导出失败：{message}",
+    "done": "已导出：{path}",
+    "noLast": "这个文档还没有导出过，先从「文件 → 导出」选一种格式",
+    "printFailed": "打印失败：{message}",
+    "importFailed": "导入失败：{message}"
+  },
+  "update": {
+    "title": "更新",
+    "downloaded": "新版本 {version} 已经下载好了，要重启以更新吗？",
+    "restart": "重启以更新",
+    "later": "稍后",
+    "available": "发现新版本 {version}，正在后台下载，下载好了会告诉你",
+    "none": "已经是最新版本（{version}）",
+    "failed": "检查更新失败：{message}",
+    "disabled": "这个版本（{version}）不检查更新"
+  },
+  "upload": {
+    "tokenSaved": "Token 已加密保存",
+    "tokenCleared": "Token 已清除"
+  },
+  "diagram": {
+    "unsupported": "不支持的图表：{kind}",
+    "failed": "图表没有画出来"
+  },
+  "settings": {
+    "title": "偏好设置",
+    "resetSection": "恢复本节的默认设置",
+    "dictionary": {
+      "empty": "还没有加入过词"
+    },
+    "shortcuts": {
+      "filter": "按名称或快捷键查找",
+      "detail": "{label}：{detail}",
+      "recording": "请按下快捷键…",
+      "none": "无",
+      "reset": "恢复默认",
+      "fixed": "这一项的快捷键不能改",
+      "conflictTitle": "快捷键冲突",
+      "conflict": "「{key}」已经给了「{other}」，要改给「{name}」吗？",
+      "reassign": "改给它",
+      "reserved": "「{key}」编辑器自己在用，换一个吧",
+      "fixedConflict": "「{key}」是「{other}」的，那一项的快捷键不能改"
+    },
+    "token": {
+      "set": "已填（不显示）；输入新的替换",
+      "unset": "没有填"
+    },
+    "codeLanguage": {
+      "none": "不指定",
+      "last": "最近使用",
+      "fixed": "固定语言",
+      "placeholder": "选或输入语言"
+    },
+    "section": {
+      "appearance": "外观",
+      "save": "保存与恢复",
+      "sidebar": "侧栏与状态栏",
+      "input": "输入",
+      "editing": "编辑体验",
+      "code": "代码块",
+      "markdown": "Markdown 扩展语法",
+      "images": "图片与上传",
+      "export": "导出",
+      "language": "语言与拼写",
+      "shortcuts": "快捷键",
+      "update": "更新"
+    },
+    "format": {
+      "minutes": "{value} 分钟",
+      "spaces": "{value} 个空格",
+      "wordsPerMinute": "{value} 词每分钟"
+    },
+    "label": {
+      "theme": "主题",
+      "followSystemTheme": "跟随系统深浅色",
+      "lightTheme": "浅色时的主题",
+      "darkTheme": "深色时的主题",
+      "fontSize": "字体大小",
+      "lineWidth": "内容宽度",
+      "autoSave": "自动保存",
+      "autoSaveIntervalMinutes": "自动保存间隔",
+      "saveOnFileSwitch": "切换文件时自动保存",
+      "recoverUnsavedDrafts": "恢复未保存的草稿",
+      "insertFinalNewline": "保存时插入末尾换行",
+      "defaultLineEnding": "默认换行符",
+      "startup": "启动时",
+      "showStatusBar": "显示状态栏",
+      "alwaysShowWordCount": "总是显示字数",
+      "defaultSidebarTab": "默认侧栏",
+      "collapsibleOutline": "允许折叠大纲",
+      "recordRecentFiles": "记录最近文件",
+      "readingSpeed": "阅读速度",
+      "indentSize": "Markdown 缩进宽度",
+      "codeIndentSize": "代码缩进宽度",
+      "shiftTabAutoIndent": "Shift+Tab 自动缩进",
+      "autoPair": "自动配对",
+      "emojiAutocomplete": "Emoji 自动完成",
+      "spellcheck": "拼写检查",
+      "copyMarkdownAsPlainText": "默认复制 Markdown 源码",
+      "typewriterCenter": "打字机模式保持居中",
+      "smartQuotes": "智能引号",
+      "smartDashes": "智能破折号与省略号",
+      "preserveSingleLineBreaks": "保留单个换行",
+      "defaultCodeLanguage": "默认代码语言",
+      "defaultCodeLanguageApplyTo": "应用默认语言的时机",
+      "codeLineNumbers": "显示行号",
+      "codeWrap": "长代码自动换行",
+      "extensions": {
+        "html": "HTML",
+        "toc": "目录 [TOC]",
+        "mermaid": "Mermaid",
+        "flowchart": "Flowchart",
+        "sequence": "Sequence",
+        "math": "公式",
+        "footnote": "脚注",
+        "alerts": "Callout",
+        "emoji": "Emoji",
+        "highlight": "高亮",
+        "superscript": "上标",
+        "subscript": "下标",
+        "autoLinks": "自动链接"
+      },
+      "autoNumberingForMath": "公式自动编号",
+      "imageInsertAction": "插入本地媒体时",
+      "escapeImageUrls": "自动转义图片 URL",
+      "addDotSlashToRelativeImagePath": "相对路径添加 ./",
+      "uploadMethod": "上传方式",
+      "uploadUrl": "上传接口地址",
+      "uploadToken": "Token",
+      "uploadCommand": "上传命令",
+      "pdfPageSize": "PDF 页面大小",
+      "pdfLandscape": "横向",
+      "pdfMargin": "页边距（英寸）",
+      "pdfHeaderFooter": "页眉页脚",
+      "pdfPrintBackground": "打印背景",
+      "pdfOutline": "生成书签",
+      "exportImages": "HTML 里的图片",
+      "pandocPath": "Pandoc 的路径",
+      "pandocArgs": "Pandoc 的额外参数",
+      "afterExport": "导出以后",
+      "language": "界面语言",
+      "spellcheckLanguages": "拼写检查的语言",
+      "autoCheckUpdates": "自动检查更新",
+      "userDictionary": "用户词典",
+      "keyBindings": "快捷键"
+    },
+    "hint": {
+      "followSystemTheme": "系统切换深浅色时跟着换主题",
+      "autoSave": "已经保存过的文档改了以后按间隔保存",
+      "saveOnFileSwitch": "在侧栏里打开别的文件之前先保存",
+      "recoverUnsavedDrafts": "意外退出后再打开时恢复没保存的内容",
+      "defaultLineEnding": "新文档用的换行符；打开的文件沿用它自己的",
+      "readingSpeed": "字数统计里估算阅读时间用",
+      "autoPair": "输入括号、引号时补上另一半",
+      "copyMarkdownAsPlainText": "{copy} 复制源码；不开时复制带格式的内容",
+      "smartQuotes": "直引号显示成弯引号（只改显示，原文不变）",
+      "preserveSingleLineBreaks": "导出、打印时单个换行显示成换行（编辑区里一直按换行显示）",
+      "extensions": {
+        "html": "HTML 块和行内 HTML",
+        "toc": "[TOC] 那一行显示成目录",
+        "mermaid": "mermaid 代码块画成图",
+        "flowchart": "flow 代码块画成流程图",
+        "sequence": "sequence 代码块画成时序图",
+        "math": "行内公式和公式块",
+        "footnote": "[^1] 这类脚注",
+        "alerts": "> [!NOTE] 这类提示块",
+        "emoji": ":smile: 这类写法",
+        "highlight": "==高亮==",
+        "superscript": "x^2^",
+        "subscript": "H~2~O",
+        "autoLinks": "网址、邮箱直接变成链接"
+      },
+      "uploadToken": "放在 Authorization 请求头里；加密保存，这里只显示有没有填",
+      "uploadCommand": "图片的路径加在命令后面；命令输出里的网址就是上传后的地址",
+      "pdfHeaderFooter": "页眉是文档标题，页脚是页码",
+      "pdfOutline": "按标题生成 PDF 书签",
+      "pandocPath": "空着时从系统的 PATH 里找；导出 Word 这些格式、导入要用 Pandoc",
+      "pandocArgs": "例如 --toc --reference-doc=模板.docx",
+      "userDictionary": "右键菜单里「加入词典」加进来的词；点 × 删掉",
+      "keyBindings": "点右边的框，再按下新的快捷键；退格键清除，Esc 取消"
+    },
+    "option": {
+      "defaultLineEnding": {
+        "auto": "自动（跟随系统）",
+        "lf": "Unix（LF）",
+        "crlf": "Windows（CRLF）"
+      },
+      "startup": {
+        "restore": "恢复上次的窗口和工作区",
+        "blank": "新建空白文档"
+      },
+      "defaultSidebarTab": {
+        "files": "文件",
+        "outline": "大纲",
+        "search": "搜索"
+      },
+      "emojiAutocomplete": {
+        "automatic": "自动触发",
+        "escape": "按 Esc 触发",
+        "off": "关闭"
+      },
+      "defaultCodeLanguageApplyTo": {
+        "markdown": "通过 Markdown 输入",
+        "menu": "通过菜单插入",
+        "both": "两者"
+      },
+      "autoNumberingForMath": {
+        "false": "不编号",
+        "ams": "仅 AMS 环境",
+        "all": "所有公式块"
+      },
+      "imageInsertAction": {
+        "none": "无特殊操作",
+        "current": "复制到当前文件夹",
+        "assets": "复制到 ./assets",
+        "documentAssets": "复制到 ./{'$'}{'{'}filename{'}'}.assets"
+      },
+      "uploadMethod": {
+        "none": "不上传",
+        "api": "上传接口",
+        "command": "自定义命令"
+      },
+      "exportImages": {
+        "reference": "引用（相对导出位置的路径）",
+        "embed": "嵌入文件"
+      },
+      "afterExport": {
+        "none": "不做什么",
+        "open": "打开文件",
+        "reveal": "打开所在文件夹"
+      },
+      "spellcheckLanguages": {
+        "en-US": "英语（美国）",
+        "en-GB": "英语（英国）",
+        "de-DE": "德语",
+        "fr-FR": "法语",
+        "es-ES": "西班牙语",
+        "pt-BR": "葡萄牙语（巴西）",
+        "ru": "俄语"
+      }
+    }
+  },
+  "editor": {
+    "table": {
+      "insert": "插入表格",
+      "columns": "列数",
+      "rows": "行数",
+      "more": "更多",
+      "alignLeft": "左对齐",
+      "alignCenter": "居中",
+      "alignRight": "右对齐",
+      "addRowAbove": "上方插入行",
+      "addRowBelow": "下方插入行",
+      "addColumnLeft": "左侧插入列",
+      "addColumnRight": "右侧插入列",
+      "deleteRow": "删除行",
+      "deleteRowShort": "✕行",
+      "deleteColumn": "删除列",
+      "deleteColumnShort": "✕列",
+      "moveRowUp": "上移行",
+      "moveRowDown": "下移行",
+      "moveColumnLeft": "左移列",
+      "moveColumnRight": "右移列",
+      "selectRow": "选择行",
+      "selectColumn": "选择列",
+      "selectTable": "选择表格",
+      "deleteTable": "删除表格"
+    },
+    "viewer": {
+      "zoomOut": "缩小（-）",
+      "zoomIn": "放大（+）",
+      "actualSize": "原始大小（0）"
+    },
+    "codeLanguage": "语言",
+    "content": {
+      "tableColumn": "列 {n}",
+      "tableCell": "内容",
+      "newColumn": "新列",
+      "linkText": "链接文本",
+      "imageAlt": "图片描述",
+      "commentText": "注释文本",
+      "footnote": "脚注内容",
+      "frontMatterTitle": "新文档",
+      "diagramStart": "开始",
+      "diagramEnd": "结束"
+    },
+    "insertFailed": "{kind}「{name}」没有插入：{reason}",
+    "kind": {
+      "image": "图片",
+      "video": "视频",
+      "audio": "音频"
+    }
+  }
+}

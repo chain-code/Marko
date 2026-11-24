@@ -1,0 +1,23 @@
+/*
+ * 应用界面跟主题走（1.11 节）：界面是 Element Plus 的组件，这里只把它的 CSS 变量指到主题变量上。
+ * 深色时 <html> 有 dark 类，Element Plus 自带的暗色变量（element-plus/theme-chalk/dark/css-vars.css）先生效，再被这里覆盖
+ */
+:root,
+html.dark {
+  --el-color-primary: var(--app-accent);
+  --el-bg-color: var(--app-panel);
+  --el-bg-color-page: var(--app-background);
+  --el-bg-color-overlay: var(--app-panel);
+  --el-text-color-primary: var(--app-text);
+  --el-text-color-regular: var(--app-text);
+  --el-text-color-secondary: var(--app-muted);
+  --el-border-color: var(--app-border);
+  --el-border-color-light: var(--app-border);
+  --el-fill-color-light: var(--app-panel-subtle);
+}
+
+body {
+  margin: 0;
+  background: var(--app-background);
+  color: var(--app-text);
+}

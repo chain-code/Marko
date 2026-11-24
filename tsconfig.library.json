@@ -1,13 +1,13 @@
 {
-  "extends": "./tsconfig.app.json",
-  "include": ["env.d.ts", "src/**/*", "src/**/*.vue"],
-  "exclude": ["src/main.ts", "src/App.vue"],
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "composite": false,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "noEmit": false,
     "declaration": true,
     "emitDeclarationOnly": true,
-    "declarationDir": "./dist-lib",
-    "types": ["node"]
-  }
+    "declarationDir": "./dist-lib/.types",
+    "rootDir": "./packages"
+  },
+  "files": ["packages/editor-vue/src/library.ts"],
+  "include": ["packages/editor-vue/src/env.d.ts", "packages/render/src/raw.d.ts"]
 }

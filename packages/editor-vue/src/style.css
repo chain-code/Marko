@@ -1,0 +1,4 @@
+/* 库的样式（K-1：import "marko/style.css"）：排版基础、编辑时的样式、默认的浅色主题。深色主题限定在组件里，用到时加进页面（theme.ts） */
+@import "@marko/themes/base.css";
+@import "@marko/themes/editor.css";
+@import "@marko/themes/themes/solo.css";

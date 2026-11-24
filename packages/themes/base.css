@@ -1,0 +1,670 @@
+/*
+ * #write 下的排版（1.11 节）：编辑区和导出共用。结构和类名照 Typora 导出的 HTML，
+ * 颜色、字体、宽度都是变量，由主题文件（themes/*.css）给出；这里的默认值就是浅色主题。
+ *
+ * 兼容 Typora 的主题（A-3）：
+ * - 全部放在 @layer marko-base 里。层里的规则总比不在层里的低，主题（我们的、用户的、Typora 的）不用拼选择器优先级就能盖过；
+ * - 最基本的几个变量用 Typora 的名字（--bg-color、--text-color、--monospace、--select-text-bg-color），Typora 主题改它们就能生效；
+ * - 文件末尾不在层里的几条是 Typora 的 base.css、codemirror.css 里的结构规则，Typora 的主题默认它们存在。
+ */
+@layer marko-base {
+  :root {
+    --md-font: "Open Sans", "Clear Sans", "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", "Segoe UI Emoji", sans-serif;
+    --monospace: "Lucida Console", Consolas, "Courier", monospace;
+    --md-mono: var(--monospace);
+    --md-font-size: 16px;
+    --md-content-width: 860px;
+    --bg-color: #ffffff;
+    --text-color: #333333;
+    --select-text-bg-color: rgba(59, 130, 246, 0.24);
+    --md-background: var(--bg-color);
+    --md-text: var(--text-color);
+    --md-muted: #777777;
+    --md-link: #4183c4;
+    --md-border: #dfe2e5;
+    --md-heading-rule: #eeeeee;
+    --md-hr: #e7e7e7;
+    --md-code-background: #f3f4f4;
+    --md-code-border: #e7eaed;
+    --md-pre-background: #f8f8f8;
+    --md-quote-border: #dfe2e5;
+    --md-quote-text: #777777;
+    --md-table-stripe: #f8f8f8;
+    --md-mark-background: #ffff00;
+    --md-kbd-border: #adb3b9;
+    --md-kbd-background: #ffffff;
+    --md-selection: var(--select-text-bg-color);
+    --md-alert-note: #0969da;
+    --md-alert-tip: #1a7f37;
+    --md-alert-important: #8250df;
+    --md-alert-warning: #9a6700;
+    --md-alert-caution: #cf222e;
+    --md-error: #cf222e;
+    /* 代码高亮的颜色（cm-* 类名，CodeMirror 和静态高亮共用，1.11 节） */
+    --md-tok-keyword: #770088;
+    --md-tok-string: #aa1111;
+    --md-tok-number: #116644;
+    --md-tok-comment: #aa5500;
+    --md-tok-variable: #000000;
+    --md-tok-definition: #0000ff;
+    --md-tok-type: #008855;
+    --md-tok-property: #000000;
+    --md-tok-operator: #981a1a;
+    --md-tok-meta: #555555;
+    --md-tok-tag: #117700;
+    --md-tok-attribute: #0000cc;
+    --md-tok-link: #0000cc;
+    --md-tok-heading: #0000ff;
+    --md-tok-invalid: #ff0000;
+  }
+
+  #write {
+    box-sizing: border-box;
+    max-width: var(--md-content-width);
+    margin: 0 auto;
+    padding: 30px 30px 100px;
+    background: var(--md-background);
+    color: var(--md-text);
+    font-family: var(--md-font);
+    font-size: var(--md-font-size);
+    line-height: 1.6;
+    word-wrap: break-word;
+    text-rendering: auto;
+  }
+
+  #write ::selection {
+    background: var(--md-selection);
+  }
+
+  #write > :first-child {
+    margin-top: 1rem;
+  }
+
+  /* 标题 */
+  #write h1,
+  #write h2,
+  #write h3,
+  #write h4,
+  #write h5,
+  #write h6 {
+    position: relative;
+    margin: 1rem 0;
+    font-weight: bold;
+    line-height: 1.4;
+    cursor: text;
+  }
+
+  #write h1 {
+    padding-bottom: 0.3em;
+    border-bottom: 1px solid var(--md-heading-rule);
+    font-size: 2.25em;
+    line-height: 1.2;
+  }
+
+  #write h2 {
+    padding-bottom: 0.3em;
+    border-bottom: 1px solid var(--md-heading-rule);
+    font-size: 1.75em;
+    line-height: 1.225;
+  }
+
+  #write h3 {
+    font-size: 1.5em;
+    line-height: 1.43;
+  }
+
+  #write h4 {
+    font-size: 1.25em;
+  }
+
+  #write h5,
+  #write h6 {
+    font-size: 1em;
+  }
+
+  #write h6 {
+    color: var(--md-muted);
+  }
+
+  #write h1 code,
+  #write h2 code,
+  #write h3 code,
+  #write h4 code,
+  #write h5 code,
+  #write h6 code {
+    font-size: inherit;
+  }
+
+  /* 段落、列表 */
+  #write p,
+  #write blockquote,
+  #write ul,
+  #write ol,
+  #write dl,
+  #write table,
+  #write pre,
+  #write .md-math-block,
+  #write .md-diagram-panel,
+  #write .md-alert {
+    margin: 0.8em 0;
+  }
+
+  #write li > ol,
+  #write li > ul {
+    margin: 0;
+  }
+
+  #write ul,
+  #write ol {
+    padding-left: 30px;
+  }
+
+  /* 同 Typora 的 base.css：项与项之间、项内段落之间都是 0.5rem，只去掉第一个子元素的上边距 */
+  #write li > p {
+    margin: 0.5rem 0;
+  }
+
+  #write li > :first-child {
+    margin-top: 0;
+  }
+
+  #write .task-list-item {
+    position: relative;
+    list-style-type: none;
+  }
+
+  #write .task-list-item > input {
+    position: absolute;
+    top: 0.35em;
+    left: -1.6em;
+    margin: 0;
+    accent-color: var(--md-link);
+  }
+
+  /* 导出的文件里复选框点不动（同 Typora：不用 disabled，免得变灰） */
+  .typora-export #write .task-list-item > input {
+    pointer-events: none;
+  }
+
+  /* 有序列表里的任务项保留序号，复选框跟在序号后面 */
+  #write ol > .task-list-item {
+    list-style-type: decimal;
+  }
+
+  #write ol > .task-list-item > input {
+    position: static;
+    margin-right: 0.4em;
+  }
+
+  #write ol > .task-list-item > input + p {
+    display: inline;
+  }
+
+  #write dl {
+    padding: 0;
+  }
+
+  #write dt {
+    margin: 0;
+    font-weight: normal;
+  }
+
+  #write dd {
+    margin: 0 0 0 40px;
+    padding: 0;
+  }
+
+  #write dd > p:first-child {
+    margin-top: 0;
+  }
+
+  /* 行内 */
+  #write a {
+    color: var(--md-link);
+    text-decoration: none;
+  }
+
+  #write a:hover {
+    text-decoration: underline;
+  }
+
+  #write code,
+  #write tt {
+    padding: 0 2px;
+    border: 1px solid var(--md-code-border);
+    border-radius: 3px;
+    background: var(--md-code-background);
+    font-family: var(--md-mono);
+    font-size: 0.9em;
+  }
+
+  #write kbd {
+    margin: 0 0.1em;
+    padding: 0.1em 0.6em;
+    border: 1px solid var(--md-kbd-border);
+    border-radius: 3px;
+    background: var(--md-kbd-background);
+    box-shadow: 0 1px 0 rgba(12, 13, 14, 0.2), 0 0 0 2px var(--md-kbd-background) inset;
+    font-family: var(--md-mono);
+    font-size: 0.8em;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  #write mark {
+    background: var(--md-mark-background);
+    color: inherit;
+  }
+
+  /* 导出的是 title；编辑区里是 data-tip（提示框由组件显示，B-16） */
+  #write abbr[title],
+  #write abbr[data-tip] {
+    cursor: help;
+    text-decoration: underline dotted;
+  }
+
+  #write img {
+    max-width: 100%;
+    vertical-align: middle;
+  }
+
+  /* 单独成段的图片居中（M-1）：结构和规则同 Typora 导出的 <p><span class="md-image"><img></span></p> */
+  #write p > .md-image:only-child {
+    display: inline-block;
+    width: 100%;
+  }
+
+  #write p > .md-image:only-child img {
+    display: block;
+    margin: auto;
+  }
+
+  #write video,
+  #write audio,
+  #write iframe {
+    max-width: 100%;
+  }
+
+  #write iframe {
+    border: 0;
+  }
+
+  #write .md-emoji {
+    font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  }
+
+  /* 引用、Callout */
+  #write blockquote {
+    padding: 0 15px;
+    border-left: 4px solid var(--md-quote-border);
+    color: var(--md-quote-text);
+  }
+
+  #write blockquote > :first-child,
+  #write .md-alert > :first-child {
+    margin-top: 0;
+  }
+
+  #write blockquote > :last-child,
+  #write .md-alert > :last-child {
+    margin-bottom: 0;
+  }
+
+  #write .md-alert {
+    --md-alert-color: var(--md-alert-note);
+    padding: 0.5em 1em;
+    border-left: 4px solid var(--md-alert-color);
+  }
+
+  #write .md-alert-tip {
+    --md-alert-color: var(--md-alert-tip);
+  }
+
+  #write .md-alert-important {
+    --md-alert-color: var(--md-alert-important);
+  }
+
+  #write .md-alert-warning {
+    --md-alert-color: var(--md-alert-warning);
+  }
+
+  #write .md-alert-caution {
+    --md-alert-color: var(--md-alert-caution);
+  }
+
+  /* 标题：图标 + 名称，在第一段开头（同 Typora 的 base.css） */
+  #write .md-alert-text {
+    color: var(--md-alert-color);
+    font-size: 0.9rem;
+    font-weight: 700;
+  }
+
+  #write .md-alert-text svg {
+    position: relative;
+    top: 0.125em;
+    margin-right: 1ch;
+    overflow: visible;
+    fill: currentColor;
+  }
+
+  /* 代码块：结构同 Typora 导出的代码块（CodeMirror 的 DOM、cm-* 类名），Typora 的主题能直接套用（A-3） */
+  #write pre,
+  #write .md-fences {
+    overflow-x: auto;
+    padding: 8px 4px 6px;
+    border: 1px solid var(--md-code-border);
+    border-radius: 3px;
+    background: var(--md-pre-background);
+    font-family: var(--md-mono);
+    font-size: 0.9em;
+    line-height: 1.5;
+  }
+
+  #write pre code {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font-size: inherit;
+    white-space: pre;
+  }
+
+  #write .md-fences-with-lineno .CodeMirror-code {
+    counter-reset: md-code-line;
+  }
+
+  #write .md-fences-with-lineno .CodeMirror-line::before {
+    display: inline-block;
+    width: 2.5em;
+    margin-right: 0.8em;
+    color: var(--md-muted);
+    text-align: right;
+    content: counter(md-code-line);
+    counter-increment: md-code-line;
+    user-select: none;
+  }
+
+  /* 记号的颜色：类名是 CodeMirror 5 的（静态高亮和编辑时的 CodeMirror 共用），颜色是 --md-tok-* 变量 */
+  #write .cm-keyword {
+    color: var(--md-tok-keyword);
+  }
+
+  #write .cm-string,
+  #write .cm-string-2 {
+    color: var(--md-tok-string);
+  }
+
+  #write .cm-number,
+  #write .cm-atom {
+    color: var(--md-tok-number);
+  }
+
+  #write .cm-comment {
+    color: var(--md-tok-comment);
+    font-style: italic;
+  }
+
+  #write .cm-variable,
+  #write .cm-variable-2 {
+    color: var(--md-tok-variable);
+  }
+
+  #write .cm-def,
+  #write .cm-builtin {
+    color: var(--md-tok-definition);
+  }
+
+  #write .cm-variable-3,
+  #write .cm-type {
+    color: var(--md-tok-type);
+  }
+
+  #write .cm-property {
+    color: var(--md-tok-property);
+  }
+
+  #write .cm-operator {
+    color: var(--md-tok-operator);
+  }
+
+  #write .cm-meta,
+  #write .cm-qualifier,
+  #write .cm-hr {
+    color: var(--md-tok-meta);
+  }
+
+  #write .cm-tag,
+  #write .cm-quote,
+  #write .cm-positive {
+    color: var(--md-tok-tag);
+  }
+
+  #write .cm-attribute {
+    color: var(--md-tok-attribute);
+  }
+
+  #write .cm-link {
+    color: var(--md-tok-link);
+  }
+
+  #write .cm-header {
+    color: var(--md-tok-heading);
+    font-weight: bold;
+  }
+
+  #write .cm-em {
+    font-style: italic;
+  }
+
+  #write .cm-strong {
+    font-weight: bold;
+  }
+
+  #write .cm-strikethrough {
+    text-decoration: line-through;
+  }
+
+  #write .cm-error,
+  #write .cm-negative {
+    color: var(--md-tok-invalid);
+  }
+
+  /* 表格 */
+  #write .table-figure {
+    overflow-x: auto;
+    margin: 1.2em 0;
+    padding: 0;
+  }
+
+  #write table {
+    width: 100%;
+    border-collapse: collapse;
+    word-break: initial;
+  }
+
+  #write .table-figure > table {
+    margin: 0;
+  }
+
+  #write table tr {
+    border: 1px solid var(--md-border);
+  }
+
+  #write table tr:nth-child(2n),
+  #write thead {
+    background: var(--md-table-stripe);
+  }
+
+  #write th {
+    padding: 6px 13px;
+    border: 1px solid var(--md-border);
+    border-bottom: 0;
+    font-weight: bold;
+    text-align: left;
+  }
+
+  #write td {
+    min-width: 32px;
+    padding: 6px 13px;
+    border: 1px solid var(--md-border);
+  }
+
+  /* 分隔线 */
+  #write hr {
+    box-sizing: content-box;
+    height: 2px;
+    margin: 16px 0;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    background: var(--md-hr);
+  }
+
+  /* 公式、图表 */
+  #write .md-math-block {
+    overflow-x: auto;
+    text-align: center;
+  }
+
+  #write .md-math-container {
+    display: inline-block;
+  }
+
+  #write .md-math-inline mjx-container {
+    display: inline;
+  }
+
+  #write .md-math-error,
+  #write .md-diagram-error {
+    color: var(--md-error);
+  }
+
+  #write .md-math-error pre,
+  #write .md-diagram-error pre {
+    color: var(--md-text);
+    text-align: left;
+  }
+
+  #write .md-math-error-message,
+  #write .md-diagram-error-message {
+    margin: 0.3em 0 0;
+    font-size: 0.85em;
+  }
+
+  #write .md-diagram-panel {
+    overflow-x: auto;
+    text-align: center;
+  }
+
+  #write .md-diagram-panel svg {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* 目录 */
+  #write .md-toc {
+    margin: 20px 0;
+    font-size: 0.9em;
+  }
+
+  #write .md-toc-content {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+  }
+
+  #write .md-toc-item {
+    display: block;
+  }
+
+  #write .md-toc-inner {
+    color: var(--md-link);
+  }
+
+  #write .md-toc-h1 .md-toc-inner {
+    font-weight: bold;
+  }
+
+  #write .md-toc-h2 {
+    padding-left: 2em;
+  }
+
+  #write .md-toc-h3 {
+    padding-left: 4em;
+  }
+
+  #write .md-toc-h4 {
+    padding-left: 6em;
+  }
+
+  #write .md-toc-h5 {
+    padding-left: 8em;
+  }
+
+  #write .md-toc-h6 {
+    padding-left: 10em;
+  }
+
+  /* 脚注 */
+  #write .md-footnote {
+    font-size: 0.8em;
+    line-height: 0;
+  }
+
+  #write .md-footnote a {
+    padding: 0 2px;
+    border-radius: 3px;
+    background: var(--md-code-background);
+  }
+
+  #write .footnotes-area {
+    margin-top: 2em;
+    color: var(--md-muted);
+    font-size: 0.9em;
+  }
+
+  #write .footnotes-area hr {
+    margin: 1em 0;
+  }
+
+  #write .footnote-line {
+    margin: 0.3em 0;
+  }
+
+  #write .md-fn-count {
+    font-weight: bold;
+  }
+
+  #write .md-fn-count::after {
+    content: ".";
+  }
+
+  #write .reversefootnote {
+    margin-left: 0.2em;
+  }
+
+  @media print {
+    #write {
+      max-width: none;
+      padding: 0;
+    }
+
+    #write pre,
+    #write .table-figure,
+    #write .md-math-block,
+    #write .md-diagram-panel {
+      page-break-inside: avoid;
+    }
+  }
+}
+
+/* 不在层里：Typora 的 codemirror.css 里的这条。代码块每行是一个 pre.CodeMirror-line，去掉 pre 的边框、背景和边距 */
+.CodeMirror pre.CodeMirror-line {
+  overflow: visible;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  white-space: pre;
+}

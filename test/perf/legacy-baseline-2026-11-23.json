@@ -1,0 +1,131 @@
+{
+  "url": "http://127.0.0.1:4173/",
+  "browser": "Edge（headless）",
+  "document": {
+    "chars": 101935,
+    "blocks": 930
+  },
+  "openMs": 1053,
+  "results": [
+    {
+      "label": "PageDown ×12（从开头往下翻）",
+      "keyToFrame": {
+        "count": 12,
+        "median": 268.3,
+        "p95": 415.3,
+        "max": 415.3,
+        "over16": 12
+      },
+      "slowEventDuration": {
+        "count": 13,
+        "median": 288,
+        "p95": 432,
+        "max": 432,
+        "over16": 13
+      },
+      "slowEventProcessing": {
+        "count": 13,
+        "median": 266.8,
+        "p95": 413.7,
+        "max": 413.7,
+        "over16": 13
+      }
+    },
+    {
+      "label": "ArrowDown ×15（文档中部）",
+      "keyToFrame": {
+        "count": 15,
+        "median": 269.9,
+        "p95": 364.4,
+        "max": 364.4,
+        "over16": 15
+      },
+      "slowEventDuration": {
+        "count": 15,
+        "median": 272,
+        "p95": 384,
+        "max": 384,
+        "over16": 15
+      },
+      "slowEventProcessing": {
+        "count": 15,
+        "median": 268.7,
+        "p95": 363.7,
+        "max": 363.7,
+        "over16": 15
+      }
+    },
+    {
+      "label": "输入 15 个字母（文档中部）",
+      "keyToFrame": {
+        "count": 15,
+        "median": 389.1,
+        "p95": 490.6,
+        "max": 490.6,
+        "over16": 15
+      },
+      "slowEventDuration": {
+        "count": 61,
+        "median": 408,
+        "p95": 504,
+        "max": 1704,
+        "over16": 61
+      },
+      "slowEventProcessing": {
+        "count": 61,
+        "median": 0.1,
+        "p95": 1.5,
+        "max": 326.8,
+        "over16": 1
+      }
+    },
+    {
+      "label": "输入 15 个字母（文档末尾）",
+      "keyToFrame": {
+        "count": 15,
+        "median": 417.1,
+        "p95": 569.2,
+        "max": 569.2,
+        "over16": 15
+      },
+      "slowEventDuration": {
+        "count": 60,
+        "median": 432,
+        "p95": 576,
+        "max": 576,
+        "over16": 60
+      },
+      "slowEventProcessing": {
+        "count": 60,
+        "median": 0.1,
+        "p95": 1,
+        "max": 1.1,
+        "over16": 0
+      }
+    },
+    {
+      "label": "ArrowUp ×15（文档末尾）",
+      "keyToFrame": {
+        "count": 15,
+        "median": 262.8,
+        "p95": 311.7,
+        "max": 311.7,
+        "over16": 15
+      },
+      "slowEventDuration": {
+        "count": 15,
+        "median": 272,
+        "p95": 320,
+        "max": 320,
+        "over16": 15
+      },
+      "slowEventProcessing": {
+        "count": 15,
+        "median": 262.5,
+        "p95": 310.6,
+        "max": 310.6,
+        "over16": 15
+      }
+    }
+  ]
+}

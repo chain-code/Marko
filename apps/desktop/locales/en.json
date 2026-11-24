@@ -1,0 +1,714 @@
+{
+  "meta": {
+    "name": "English"
+  },
+  "app": {
+    "name": "Marko",
+    "tagline": "A local-first Markdown editor",
+    "version": "Version {version}",
+    "license": "MIT License · © 2026 chain-code",
+    "untitledFile": "Untitled.md",
+    "untitled": "Untitled"
+  },
+  "common": {
+    "ok": "OK",
+    "cancel": "Cancel",
+    "close": "Close",
+    "open": "Open",
+    "save": "Save",
+    "dontSave": "Don't Save",
+    "saveAs": "Save As...",
+    "remove": "Remove",
+    "clear": "Clear",
+    "done": "Done",
+    "search": "Search",
+    "notFound": "No results",
+    "badRegex": "Invalid regular expression",
+    "caseSensitive": "Match Case",
+    "wholeWord": "Whole Word",
+    "regex": "Regular Expression",
+    "openFolder": "Open Folder...",
+    "fileManager": {
+      "mac": "Finder",
+      "windows": "File Explorer",
+      "linux": "File Manager"
+    }
+  },
+  "menu": {
+    "app": {
+      "about": "About Marko",
+      "preferences": "Preferences...",
+      "hide": "Hide Marko",
+      "hideOthers": "Hide Others",
+      "unhide": "Show All",
+      "quit": "Quit Marko"
+    },
+    "file": {
+      "title": "File",
+      "new": "New",
+      "newWindow": "New Window",
+      "open": "Open...",
+      "openFolder": "Open Folder...",
+      "workspace": "Workspace",
+      "openFolderAsWorkspace": "Open Containing Folder as Workspace",
+      "refreshWorkspace": "Refresh Workspace Folder",
+      "closeWorkspace": "Close Workspace Folder",
+      "quickOpen": "Open Quickly...",
+      "recent": "Open Recent",
+      "recentNone": "(None)",
+      "showRecent": "Show Recent Files...",
+      "clearRecent": "Clear Recent Files",
+      "save": "Save",
+      "saveAs": "Save As...",
+      "reload": "Reload",
+      "reopenWithEncoding": "Reopen with Encoding",
+      "operations": "File Operations",
+      "rename": "Rename...",
+      "copyPath": "Copy File Path",
+      "reveal": "Reveal in {manager}",
+      "openContainingFolder": "Open Containing Folder",
+      "import": "Import...",
+      "export": "Export",
+      "exportLast": "Export with Previous Format",
+      "print": "Print...",
+      "close": "Close",
+      "quit": "Exit"
+    },
+    "export": {
+      "html": "HTML",
+      "htmlPlain": "HTML (without styles)",
+      "pdf": "PDF",
+      "png": "Image (PNG)",
+      "docx": "Word (.docx)",
+      "odt": "OpenDocument (.odt)",
+      "rtf": "RTF",
+      "epub": "EPUB",
+      "latex": "LaTeX",
+      "rst": "reStructuredText",
+      "mediawiki": "MediaWiki"
+    },
+    "edit": {
+      "title": "Edit",
+      "undo": "Undo",
+      "redo": "Redo",
+      "cut": "Cut",
+      "copy": "Copy",
+      "paste": "Paste",
+      "pastePlainText": "Paste as Plain Text",
+      "selectAll": "Select All",
+      "spellcheck": "Check Spelling",
+      "find": "Find",
+      "findNext": "Find Next",
+      "findPrevious": "Find Previous",
+      "replace": "Replace"
+    },
+    "paragraph": {
+      "title": "Paragraph",
+      "paragraph": "Paragraph",
+      "heading1": "Heading 1",
+      "heading2": "Heading 2",
+      "heading3": "Heading 3",
+      "heading4": "Heading 4",
+      "heading5": "Heading 5",
+      "heading6": "Heading 6",
+      "increaseHeading": "Increase Heading Level",
+      "decreaseHeading": "Decrease Heading Level",
+      "table": "Table",
+      "insertTable": "Insert Table...",
+      "addRowAbove": "Insert Row Above",
+      "addRowBelow": "Insert Row Below",
+      "moveRowUp": "Move Row Up",
+      "moveRowDown": "Move Row Down",
+      "deleteRow": "Delete Row",
+      "addColumnLeft": "Insert Column Left",
+      "addColumnRight": "Insert Column Right",
+      "moveColumnLeft": "Move Column Left",
+      "moveColumnRight": "Move Column Right",
+      "deleteColumn": "Delete Column",
+      "selectCell": "Select Cell",
+      "selectRow": "Select Row",
+      "selectColumn": "Select Column",
+      "selectTable": "Select Table",
+      "deleteTable": "Delete Table",
+      "alignLeft": "Align Left",
+      "alignCenter": "Align Center",
+      "alignRight": "Align Right",
+      "codeBlock": "Code Block",
+      "mathBlock": "Math Block",
+      "blockquote": "Quote",
+      "orderedList": "Ordered List",
+      "bulletList": "Unordered List",
+      "taskList": "Task List",
+      "definitionList": "Definition List",
+      "toggleTask": "Toggle Task Status",
+      "indent": "Indent",
+      "outdent": "Outdent",
+      "insertParagraphAbove": "Insert Paragraph Above",
+      "insertParagraphBelow": "Insert Paragraph Below",
+      "footnote": "Footnote",
+      "hr": "Horizontal Line",
+      "toc": "Table of Contents [TOC]",
+      "frontMatter": "YAML Front Matter",
+      "callout": "Callout",
+      "diagram": "Diagram"
+    },
+    "format": {
+      "title": "Format",
+      "bold": "Bold",
+      "italic": "Italic",
+      "underline": "Underline",
+      "strike": "Strikethrough",
+      "inlineCode": "Code",
+      "inlineMath": "Inline Math",
+      "link": "Hyperlink",
+      "openLink": "Open Link",
+      "image": "Image",
+      "insertImage": "Insert Image",
+      "insertLocalImage": "Insert Local Image...",
+      "imageWidth": "Set Image Width...",
+      "highlight": "Highlight",
+      "superscript": "Superscript",
+      "subscript": "Subscript",
+      "comment": "Comment",
+      "clearFormat": "Clear Format"
+    },
+    "view": {
+      "title": "View",
+      "sourceMode": "Source Code Mode",
+      "focusMode": "Focus Mode",
+      "typewriterMode": "Typewriter Mode",
+      "sidebar": "Show / Hide Sidebar",
+      "outline": "Outline",
+      "fileList": "File List",
+      "fileTree": "File Tree",
+      "revealInTree": "Reveal in File Tree",
+      "search": "Search",
+      "wordCount": "Word Count...",
+      "actualSize": "Actual Size",
+      "zoomIn": "Zoom In",
+      "zoomOut": "Zoom Out",
+      "fullscreen": "Full Screen",
+      "alwaysOnTop": "Always on Top"
+    },
+    "theme": {
+      "title": "Themes",
+      "followSystem": "Follow System Appearance",
+      "openFolder": "Open Theme Folder"
+    },
+    "help": {
+      "title": "Help",
+      "about": "About Marko",
+      "checkUpdates": "Check for Updates...",
+      "devTools": "Developer Tools"
+    }
+  },
+  "contextMenu": {
+    "learnSpelling": "Add to Dictionary",
+    "copyLink": "Copy Link Address",
+    "copyImage": "Copy Image"
+  },
+  "themes": {
+    "solo": "SoloLog Light",
+    "dark": "SoloLog Dark"
+  },
+  "dialog": {
+    "markdownFiles": "Markdown",
+    "textFiles": "Text Files",
+    "allFiles": "All Files",
+    "images": "Images",
+    "videos": "Videos",
+    "audio": "Audio",
+    "pngImage": "PNG Image",
+    "importFiles": "Word, HTML, EPUB, LaTeX, OpenDocument"
+  },
+  "error": {
+    "notFound": "The file doesn't exist",
+    "noPermission": "No permission to read or write this file",
+    "isFolder": "This is a folder",
+    "exists": "A file or folder with the same name already exists",
+    "fileExists": "A file with the same name already exists",
+    "invalidArgument": "Invalid argument",
+    "outOfScope": "This file is outside the files and folders you have opened",
+    "conflict": "The file has been modified by another program",
+    "imageTooTall": "The document is too long ({height} px) to export as a single image. Export it as PDF instead",
+    "printFailed": "Printing failed",
+    "pandocMissing": "Pandoc was not found. Exporting to Word and similar formats, and importing documents, requires Pandoc ({url}). You can also set its path in Preferences → Export",
+    "pandocFormat": "Pandoc can't export this format: {format}",
+    "pandocFailed": "Pandoc error ({code}): {message}",
+    "uploadNoEndpoint": "No upload endpoint URL is set",
+    "uploadHttp": "Upload failed: HTTP {status}",
+    "uploadNoUrl": "The upload endpoint didn't return an image URL",
+    "uploadNoCommand": "No upload command is set",
+    "uploadTimeout": "The upload command timed out",
+    "uploadCommandNoUrl": "The upload command's output contains no URL",
+    "uploadCommandFailed": "Upload command error ({code}): {message}",
+    "documentNotSaved": "The document hasn't been saved yet",
+    "encryptionUnavailable": "Encrypted storage isn't available on this system, so the token was not saved"
+  },
+  "document": {
+    "deletedTitle": "{title} (deleted)",
+    "failed": "{action} failed: {message}",
+    "action": {
+      "save": "Save",
+      "saveAs": "Save As",
+      "reload": "Reload",
+      "open": "Open"
+    },
+    "reloaded": "“{name}” was changed by another program and has been reloaded",
+    "imported": "Imported “{name}”",
+    "draftRestored": "Restored “{name}” from a draft"
+  },
+  "confirm": {
+    "unsaved": "Do you want to save the changes to “{title}”?",
+    "conflict": {
+      "title": "File Changed by Another Program",
+      "message": "“{title}” was modified by another program after it was opened. What do you want to do?",
+      "overwrite": "Overwrite",
+      "reload": "Load the Version on Disk"
+    },
+    "externalChange": {
+      "title": "File Changed Outside Marko",
+      "message": "“{title}” was modified by another program, and you have unsaved changes here. What do you want to do?",
+      "keep": "Keep My Changes",
+      "reload": "Load the Version on Disk"
+    },
+    "draftConflict": {
+      "title": "Restore Draft",
+      "message": "“{title}” has an unsaved draft from last time, but the file has been modified since then. Which one do you want to use?",
+      "draft": "Use the Draft",
+      "disk": "Use the Version on Disk"
+    },
+    "trash": {
+      "title": "Move to Trash",
+      "message": "Move “{name}” to the trash?"
+    },
+    "recentMissing": {
+      "title": "Can't Open Recent File",
+      "message": "{message}:\n{path}\n\nRemove it from recent files?",
+      "remove": "Remove",
+      "keep": "Keep"
+    }
+  },
+  "files": {
+    "name": "Name",
+    "invalidName": "Names can't contain < > : \" / \\ {'|'} ? *",
+    "failed": "{action} failed: {message}",
+    "newFile": "New Markdown File",
+    "newFileMenu": "New Markdown File...",
+    "newFolder": "New Folder",
+    "newFolderMenu": "New Folder...",
+    "create": "Create",
+    "rename": "Rename",
+    "renameMenu": "Rename...",
+    "trash": "Move to Trash",
+    "trashMenu": "Move to Trash...",
+    "refresh": "Refresh Folder",
+    "openAsWorkspace": "Open as Workspace",
+    "open": "Open",
+    "copyName": "Copy Name",
+    "copyRelativePath": "Copy Relative Path",
+    "copyPath": "Copy Path",
+    "copyMarkdownLink": "Copy Markdown Link",
+    "openIn": "Open in {manager}",
+    "revealIn": "Reveal in {manager}",
+    "openContainingFolder": "Open Containing Folder",
+    "removeRecent": "Remove from Recent Files",
+    "copied": {
+      "name": "Name copied",
+      "relativePath": "Relative path copied",
+      "path": "Path copied",
+      "markdownLink": "Markdown link copied",
+      "filePath": "File path copied"
+    },
+    "notSaved": "The new document hasn't been saved to disk yet"
+  },
+  "encodings": {
+    "utf-8": "Unicode (UTF-8)",
+    "utf-16le": "Unicode (UTF-16 LE)",
+    "utf-16be": "Unicode (UTF-16 BE)",
+    "gb18030": "Chinese Simplified (GB18030)",
+    "big5": "Chinese Traditional (Big5)",
+    "shift_jis": "Japanese (Shift_JIS)",
+    "euc-jp": "Japanese (EUC-JP)",
+    "euc-kr": "Korean (EUC-KR)",
+    "windows-1252": "Western (Windows-1252)",
+    "iso-8859-1": "Western (ISO-8859-1)",
+    "windows-1251": "Cyrillic (Windows-1251)",
+    "koi8-r": "Cyrillic (KOI8-R)"
+  },
+  "drop": {
+    "open": "Drop to open",
+    "insert": "Drop to insert"
+  },
+  "link": {
+    "unsupported": "Can't open this kind of link: {url}",
+    "unsavedRelative": "The new document hasn't been saved yet, so relative links can't be opened",
+    "confirmSystem": "Open \"{name}\" with its default app?",
+    "openWithSystem": "Open"
+  },
+  "find": {
+    "placeholder": "Find",
+    "previous": "Previous",
+    "next": "Next",
+    "replaceWith": "Replace with",
+    "replace": "Replace",
+    "replaceAll": "Replace All",
+    "position": "{current} of {total}",
+    "count": "{total} matches"
+  },
+  "search": {
+    "needFolder": "Open a folder first, then search in it",
+    "placeholder": "Search in workspace",
+    "searchingCount": "Searching… {total} found",
+    "searching": "Searching…",
+    "summary": "{total} matches in {files} files",
+    "cancelledWith": "Cancelled, {summary}",
+    "cancelled": "Cancelled",
+    "truncated": "{summary} (too many, only the first {total} are listed)",
+    "fileTruncated": "Too many in this file, only the first {count} lines are listed",
+    "failed": "Search failed: {message}",
+    "error": "Search error: {message}"
+  },
+  "sidebar": {
+    "files": "Files",
+    "tree": "Tree",
+    "list": "List",
+    "noFolder": "No folder is open",
+    "outline": "Outline",
+    "search": "Search",
+    "noMarkdown": "No Markdown files",
+    "noHeadings": "No headings",
+    "emptyHeading": "(Empty heading)",
+    "openFolderFailed": "Couldn't open the folder: {message}",
+    "notInWorkspace": "The current file isn't in the workspace"
+  },
+  "quickOpen": {
+    "placeholderWorkspace": "Type a file name to search the workspace",
+    "placeholderRecent": "Type a file name to search recent files",
+    "emptyWorkspace": "No Markdown files in the workspace",
+    "emptyRecent": "No recent files"
+  },
+  "recent": {
+    "title": "Recent Files",
+    "removeLabel": "Remove {name} from recent files",
+    "empty": "No recent files"
+  },
+  "status": {
+    "notSaved": "Not saved to disk yet",
+    "uncertainEncoding": "Couldn't detect the encoding, opened as UTF-8. Try File → Reopen with Encoding",
+    "words": "{words} words",
+    "selectedWords": "{words} words selected"
+  },
+  "wordCount": {
+    "title": "Word Count",
+    "words": "Words",
+    "characters": "Characters (no spaces)",
+    "paragraphs": "Paragraphs",
+    "readingTime": "Reading time",
+    "readingValue": "About {minutes} min ({speed} words per minute)",
+    "selection": "Selection",
+    "selectionValue": "{words} words, {chars} characters, {lines} lines",
+    "cursor": "Cursor",
+    "cursorValue": "Line {line}, column {column}"
+  },
+  "image": {
+    "widthTitle": "Set Image Width",
+    "widthMessage": "Width: a plain number means pixels; units such as 50% or 20em also work",
+    "widthInvalid": "Enter a number, or a number with a unit (px, %, em, rem, vw)",
+    "noImage": "Put the cursor on an image first"
+  },
+  "export": {
+    "failed": "Export failed: {message}",
+    "done": "Exported: {path}",
+    "noLast": "This document hasn't been exported yet. Choose a format from File → Export first",
+    "printFailed": "Printing failed: {message}",
+    "importFailed": "Import failed: {message}"
+  },
+  "update": {
+    "title": "Update",
+    "downloaded": "Version {version} has been downloaded. Restart to update?",
+    "restart": "Restart to Update",
+    "later": "Later",
+    "available": "Version {version} is available and downloading in the background. You'll be told when it's ready",
+    "none": "You're up to date ({version})",
+    "failed": "Couldn't check for updates: {message}",
+    "disabled": "Updates are not checked for this build ({version})"
+  },
+  "upload": {
+    "tokenSaved": "Token saved (encrypted)",
+    "tokenCleared": "Token cleared"
+  },
+  "diagram": {
+    "unsupported": "Unsupported diagram: {kind}",
+    "failed": "The diagram couldn't be drawn"
+  },
+  "settings": {
+    "title": "Preferences",
+    "resetSection": "Restore Defaults for This Section",
+    "dictionary": {
+      "empty": "No words added yet"
+    },
+    "shortcuts": {
+      "filter": "Search by name or shortcut",
+      "detail": "{label}: {detail}",
+      "recording": "Press a shortcut…",
+      "none": "None",
+      "reset": "Reset",
+      "fixed": "This shortcut can't be changed",
+      "conflictTitle": "Shortcut Conflict",
+      "conflict": "“{key}” is already used by “{other}”. Use it for “{name}” instead?",
+      "reassign": "Reassign",
+      "reserved": "“{key}” is used by the editor itself. Please choose another",
+      "fixedConflict": "“{key}” belongs to “{other}”, which can't be changed"
+    },
+    "token": {
+      "set": "Set (hidden); type a new one to replace it",
+      "unset": "Not set"
+    },
+    "codeLanguage": {
+      "none": "None",
+      "last": "Last used",
+      "fixed": "Fixed language",
+      "placeholder": "Choose or type a language"
+    },
+    "section": {
+      "appearance": "Appearance",
+      "save": "Saving & Recovery",
+      "sidebar": "Sidebar & Status Bar",
+      "input": "Input",
+      "editing": "Editing",
+      "code": "Code Blocks",
+      "markdown": "Markdown Extensions",
+      "images": "Images & Upload",
+      "export": "Export",
+      "language": "Language & Spelling",
+      "shortcuts": "Shortcuts",
+      "update": "Updates"
+    },
+    "format": {
+      "minutes": "{value} min",
+      "spaces": "{value} spaces",
+      "wordsPerMinute": "{value} words per minute"
+    },
+    "label": {
+      "theme": "Theme",
+      "followSystemTheme": "Follow system appearance",
+      "lightTheme": "Theme in light mode",
+      "darkTheme": "Theme in dark mode",
+      "fontSize": "Font size",
+      "lineWidth": "Content width",
+      "autoSave": "Auto save",
+      "autoSaveIntervalMinutes": "Auto save interval",
+      "saveOnFileSwitch": "Save when switching files",
+      "recoverUnsavedDrafts": "Recover unsaved drafts",
+      "insertFinalNewline": "Insert final newline on save",
+      "defaultLineEnding": "Default line ending",
+      "startup": "On startup",
+      "showStatusBar": "Show status bar",
+      "alwaysShowWordCount": "Always show word count",
+      "defaultSidebarTab": "Default sidebar",
+      "collapsibleOutline": "Collapsible outline",
+      "recordRecentFiles": "Remember recent files",
+      "readingSpeed": "Reading speed",
+      "indentSize": "Markdown indent width",
+      "codeIndentSize": "Code indent width",
+      "shiftTabAutoIndent": "Shift+Tab auto indent",
+      "autoPair": "Auto pair",
+      "emojiAutocomplete": "Emoji autocomplete",
+      "spellcheck": "Spell check",
+      "copyMarkdownAsPlainText": "Copy Markdown source by default",
+      "typewriterCenter": "Keep centered in typewriter mode",
+      "smartQuotes": "Smart quotes",
+      "smartDashes": "Smart dashes and ellipses",
+      "preserveSingleLineBreaks": "Preserve single line breaks",
+      "defaultCodeLanguage": "Default code language",
+      "defaultCodeLanguageApplyTo": "Apply the default language when",
+      "codeLineNumbers": "Show line numbers",
+      "codeWrap": "Wrap long lines",
+      "extensions": {
+        "html": "HTML",
+        "toc": "Table of contents [TOC]",
+        "mermaid": "Mermaid",
+        "flowchart": "Flowchart",
+        "sequence": "Sequence",
+        "math": "Math",
+        "footnote": "Footnotes",
+        "alerts": "Callout",
+        "emoji": "Emoji",
+        "highlight": "Highlight",
+        "superscript": "Superscript",
+        "subscript": "Subscript",
+        "autoLinks": "Auto links"
+      },
+      "autoNumberingForMath": "Number math automatically",
+      "imageInsertAction": "When inserting local media",
+      "escapeImageUrls": "Auto-escape image URLs",
+      "addDotSlashToRelativeImagePath": "Add ./ to relative paths",
+      "uploadMethod": "Upload method",
+      "uploadUrl": "Upload endpoint URL",
+      "uploadToken": "Token",
+      "uploadCommand": "Upload command",
+      "pdfPageSize": "PDF page size",
+      "pdfLandscape": "Landscape",
+      "pdfMargin": "Margin (inches)",
+      "pdfHeaderFooter": "Header and footer",
+      "pdfPrintBackground": "Print background",
+      "pdfOutline": "Generate bookmarks",
+      "exportImages": "Images in HTML",
+      "pandocPath": "Pandoc path",
+      "pandocArgs": "Extra Pandoc arguments",
+      "afterExport": "After exporting",
+      "language": "Interface language",
+      "spellcheckLanguages": "Spell check languages",
+      "autoCheckUpdates": "Check for updates automatically",
+      "userDictionary": "User dictionary",
+      "keyBindings": "Keyboard shortcuts"
+    },
+    "hint": {
+      "followSystemTheme": "Switch themes when the system switches between light and dark",
+      "autoSave": "Documents that have been saved before are saved at regular intervals after changes",
+      "saveOnFileSwitch": "Save before opening another file from the sidebar",
+      "recoverUnsavedDrafts": "Restore unsaved content after an unexpected exit",
+      "defaultLineEnding": "Used for new documents; opened files keep their own",
+      "readingSpeed": "Used to estimate reading time in Word Count",
+      "autoPair": "Insert the closing bracket or quote as you type",
+      "copyMarkdownAsPlainText": "{copy} copies the source; when off, it copies formatted content",
+      "smartQuotes": "Show straight quotes as curly quotes (display only, the source is unchanged)",
+      "preserveSingleLineBreaks": "Show single line breaks as line breaks in exports and prints (the editor always shows them as line breaks)",
+      "extensions": {
+        "html": "HTML blocks and inline HTML",
+        "toc": "Show the [TOC] line as a table of contents",
+        "mermaid": "Draw mermaid code blocks as diagrams",
+        "flowchart": "Draw flow code blocks as flowcharts",
+        "sequence": "Draw sequence code blocks as sequence diagrams",
+        "math": "Inline math and math blocks",
+        "footnote": "Footnotes such as [^1]",
+        "alerts": "Callout blocks such as > [!NOTE]",
+        "emoji": "Shortcodes such as :smile:",
+        "highlight": "==highlight==",
+        "superscript": "x^2^",
+        "subscript": "H~2~O",
+        "autoLinks": "Turn URLs and email addresses into links"
+      },
+      "uploadToken": "Sent in the Authorization header; stored encrypted, and only whether it is set is shown here",
+      "uploadCommand": "The image path is appended to the command; the URL in its output is the uploaded address",
+      "pdfHeaderFooter": "The header shows the document title and the footer shows page numbers",
+      "pdfOutline": "Generate PDF bookmarks from headings",
+      "pandocPath": "Leave empty to look it up in PATH; Pandoc is used to export Word and similar formats and to import documents",
+      "pandocArgs": "For example --toc --reference-doc=template.docx",
+      "userDictionary": "Words added with “Add to Dictionary” in the context menu; click × to remove one",
+      "keyBindings": "Click a box and press the new shortcut; Backspace clears it, Esc cancels"
+    },
+    "option": {
+      "defaultLineEnding": {
+        "auto": "Automatic (follow system)",
+        "lf": "Unix (LF)",
+        "crlf": "Windows (CRLF)"
+      },
+      "startup": {
+        "restore": "Restore the last windows and workspace",
+        "blank": "Open a blank document"
+      },
+      "defaultSidebarTab": {
+        "files": "Files",
+        "outline": "Outline",
+        "search": "Search"
+      },
+      "emojiAutocomplete": {
+        "automatic": "Automatic",
+        "escape": "Press Esc",
+        "off": "Off"
+      },
+      "defaultCodeLanguageApplyTo": {
+        "markdown": "Typing Markdown",
+        "menu": "Inserting from the menu",
+        "both": "Both"
+      },
+      "autoNumberingForMath": {
+        "false": "No numbering",
+        "ams": "AMS environments only",
+        "all": "All math blocks"
+      },
+      "imageInsertAction": {
+        "none": "No special action",
+        "current": "Copy to the current folder",
+        "assets": "Copy to ./assets",
+        "documentAssets": "Copy to ./{'$'}{'{'}filename{'}'}.assets"
+      },
+      "uploadMethod": {
+        "none": "Don't upload",
+        "api": "Upload endpoint",
+        "command": "Custom command"
+      },
+      "exportImages": {
+        "reference": "Reference (path relative to the export location)",
+        "embed": "Embed in the file"
+      },
+      "afterExport": {
+        "none": "Do nothing",
+        "open": "Open the file",
+        "reveal": "Open the containing folder"
+      },
+      "spellcheckLanguages": {
+        "en-US": "English (US)",
+        "en-GB": "English (UK)",
+        "de-DE": "German",
+        "fr-FR": "French",
+        "es-ES": "Spanish",
+        "pt-BR": "Portuguese (Brazil)",
+        "ru": "Russian"
+      }
+    }
+  },
+  "editor": {
+    "table": {
+      "insert": "Insert Table",
+      "columns": "Columns",
+      "rows": "Rows",
+      "more": "More",
+      "alignLeft": "Align Left",
+      "alignCenter": "Align Center",
+      "alignRight": "Align Right",
+      "addRowAbove": "Insert Row Above",
+      "addRowBelow": "Insert Row Below",
+      "addColumnLeft": "Insert Column Left",
+      "addColumnRight": "Insert Column Right",
+      "deleteRow": "Delete Row",
+      "deleteRowShort": "✕Row",
+      "deleteColumn": "Delete Column",
+      "deleteColumnShort": "✕Col",
+      "moveRowUp": "Move Row Up",
+      "moveRowDown": "Move Row Down",
+      "moveColumnLeft": "Move Column Left",
+      "moveColumnRight": "Move Column Right",
+      "selectRow": "Select Row",
+      "selectColumn": "Select Column",
+      "selectTable": "Select Table",
+      "deleteTable": "Delete Table"
+    },
+    "viewer": {
+      "zoomOut": "Zoom Out (-)",
+      "zoomIn": "Zoom In (+)",
+      "actualSize": "Actual Size (0)"
+    },
+    "codeLanguage": "Language",
+    "content": {
+      "tableColumn": "Column {n}",
+      "tableCell": "Content",
+      "newColumn": "New Column",
+      "linkText": "link text",
+      "imageAlt": "image description",
+      "commentText": "comment",
+      "footnote": "footnote",
+      "frontMatterTitle": "New Document",
+      "diagramStart": "Start",
+      "diagramEnd": "End"
+    },
+    "insertFailed": "{kind} “{name}” was not inserted: {reason}",
+    "kind": {
+      "image": "Image",
+      "video": "Video",
+      "audio": "Audio"
+    }
+  }
+}

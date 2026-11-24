@@ -1,0 +1,16 @@
+/*
+ * SoloLog 浅色（A-1）：现在 Marko 的样子。base.css 的默认值就是它，这里只写应用界面配合用的几个变量
+ */
+@import "../fonts/open-sans.css";
+
+:root {
+  color-scheme: light;
+  --app-background: #f7f7f7;
+  --app-panel: #ffffff;
+  --app-panel-subtle: #f3f4f6;
+  --app-sidebar: #f4f5f7;
+  --app-border: #d9dde3;
+  --app-text: #24272d;
+  --app-muted: #6d737c;
+  --app-accent: #3b82f6;
+}

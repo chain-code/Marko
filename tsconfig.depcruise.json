@@ -1,0 +1,5 @@
+{
+  "//": "只给 dependency-cruiser 解析新代码的导入用（.dependency-cruiser.cjs）",
+  "extends": "./tsconfig.base.json",
+  "include": ["packages/*/src/**/*", "packages/*/test/**/*", "apps/desktop/main/**/*", "apps/desktop/preload/**/*", "apps/desktop/renderer/**/*"]
+}

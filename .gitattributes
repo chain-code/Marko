@@ -1,0 +1,3 @@
+# 行为规格和无损语料要逐字节比较：不做换行符转换（test/behavior/README.md）
+test/behavior/*.md text eol=lf
+test/corpus/** -text

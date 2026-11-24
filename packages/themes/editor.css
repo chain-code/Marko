@@ -1,0 +1,278 @@
+/*
+ * 只在编辑时有的样式（1.11 节）：md- 开头的类名，不进导出。阶段 4 的编辑器按需补充
+ */
+#write {
+  outline: none;
+}
+
+/* 文本块的文字就是 Markdown 原文，软换行要显示成换行（E-5） */
+#write p,
+#write h1,
+#write h2,
+#write h3,
+#write h4,
+#write h5,
+#write h6,
+#write td,
+#write th,
+#write dt {
+  white-space: pre-wrap;
+}
+
+/* 行内片段展开时显示的标记（E-2） */
+#write .md-mark {
+  color: var(--md-muted);
+  font-family: var(--md-mono);
+  font-size: 0.9em;
+}
+
+/* 收起的片段：标记、原子片段的原文不显示（原文还在文字里，光标挨上时展开） */
+#write .md-hidden {
+  display: none;
+}
+
+/* 行内公式展开时的源码，和后面跟着的预览（I-3） */
+#write .md-math-source {
+  font-family: var(--md-mono);
+}
+
+#write .md-math-preview,
+#write .md-image-preview {
+  margin-left: 0.25em;
+  opacity: 0.85;
+}
+
+#write .md-image-preview img {
+  max-height: 8em;
+}
+
+/* 注释在编辑区灰色显示原文（B-12） */
+#write .md-comment {
+  color: var(--md-muted);
+}
+
+/* 选中的整块（代码块、公式块、表格） */
+#write .md-node-selected {
+  outline: 2px solid var(--md-selection);
+  outline-offset: 2px;
+}
+
+/* 表格里选中的单元格（prosemirror-tables） */
+#write .selectedCell {
+  background: var(--md-selection);
+}
+
+/* 编辑时在原位置显示的块：Front Matter、脚注定义、链接引用定义 */
+#write .md-meta-block {
+  color: var(--md-muted);
+  font-family: var(--md-mono);
+  font-size: 0.85em;
+}
+
+/* 代码类的块里的 CodeMirror（B-6、B-7、B-9、B-12）：外框、背景由 pre.md-fences 给（同 Typora 的结构） */
+#write .cm-editor {
+  background: transparent;
+  font: inherit;
+}
+
+#write .cm-editor.cm-focused {
+  outline: none;
+}
+
+#write .cm-editor .cm-scroller {
+  font: inherit;
+  line-height: inherit;
+}
+
+#write .cm-editor .cm-gutters {
+  border-right: 0;
+  background: transparent;
+  color: var(--md-muted);
+}
+
+/* 公式块、HTML 块、图表：光标进来时上面是源码，公式和图表在下面实时预览 */
+#write .md-math-block.md-editing > .md-math-container,
+#write .md-diagram > .md-diagram-panel {
+  margin-top: 0.5em;
+}
+
+#write .md-math-block.md-editing > .md-math-container {
+  padding-top: 0.5em;
+  border-top: 1px dashed var(--md-border);
+}
+
+#write .md-math-block > .md-math-source-editor,
+#write .md-html-block > .md-html-source-editor {
+  margin: 0;
+  text-align: left;
+}
+
+#write .md-math-container.md-math-empty::before {
+  color: var(--md-muted);
+  content: "$$";
+}
+
+/* 脚注定义（B-11）：前面显示标签，后面是回到引用处的链接 */
+#write .md-def-footnote {
+  display: flex;
+  gap: 0.5em;
+  align-items: baseline;
+}
+
+#write .md-def-footnote > .md-def-content {
+  flex: 1;
+  min-width: 0;
+}
+
+#write .md-def-footnote > .md-def-content > :first-child {
+  margin-top: 0;
+}
+
+#write .md-def-footnote > .md-def-content > :last-child {
+  margin-bottom: 0;
+}
+
+#write .md-def-name {
+  color: var(--md-muted);
+  font-family: var(--md-mono);
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+#write .md-def-backlink {
+  margin-left: 0.25em;
+  color: var(--md-link);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+/* 目录（B-10）的条目可以点 */
+#write .md-toc-item {
+  cursor: pointer;
+}
+
+/* Callout 的标题、任务的复选框是界面，不是文字 */
+#write .md-alert-title,
+#write .md-task-checkbox {
+  user-select: none;
+}
+
+#write .md-task-checkbox {
+  cursor: pointer;
+}
+
+/* 查找（N-1）：所有匹配和当前的匹配（prosemirror-search 的类名；CodeMirror 里也是这两个） */
+#write .ProseMirror-search-match {
+  background: var(--md-search-match, rgba(255, 213, 0, 0.4));
+}
+
+#write .ProseMirror-active-search-match {
+  background: var(--md-search-active, rgba(255, 150, 0, 0.6));
+}
+
+/* Emoji 补全的候选列表（I-5，编辑器自带的默认界面） */
+.md-emoji-suggestions {
+  position: absolute;
+  z-index: 1000;
+  min-width: 12em;
+  max-height: 16em;
+  overflow-y: auto;
+  padding: 4px 0;
+  border: 1px solid var(--md-border, #dfe2e5);
+  border-radius: 4px;
+  background: var(--md-background, #fff);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  font: 14px/1.6 var(--md-font, sans-serif);
+}
+
+.md-emoji-option {
+  display: flex;
+  gap: 0.5em;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.md-emoji-option-selected {
+  background: var(--md-selection, #d4e5ff);
+}
+
+.md-emoji-name {
+  color: var(--md-muted, #777);
+  font-family: var(--md-mono, monospace);
+}
+
+/* 源码模式（E-11）：整篇源码的 CodeMirror，放在编辑区的位置上 */
+.md-source-mode {
+  max-width: var(--md-content-width, 860px);
+  margin: 0 auto;
+  padding: 30px 30px 100px;
+}
+
+.md-source-mode .cm-editor {
+  font-family: var(--md-mono, monospace);
+  font-size: 0.95em;
+  line-height: 1.6;
+}
+
+.md-source-mode .cm-editor.cm-focused {
+  outline: none;
+}
+
+.md-source-mode .cm-header {
+  color: var(--md-tok-keyword);
+  font-weight: 700;
+}
+
+/* 单独成段的图片（M-1）：同 base.css 里 `p > .md-image:only-child` 的规则（编辑区的段落里还有藏起来的原文） */
+#write p.md-image-only > .md-image {
+  display: inline-block;
+  width: 100%;
+}
+
+#write p.md-image-only > .md-image img {
+  display: block;
+  margin: auto;
+}
+
+/* 图片加载失败（M-1）：显示失败状态和路径 */
+#write .md-image-failed img {
+  display: none !important;
+}
+
+#write .md-image-failed::before {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px dashed var(--md-error, #cf222e);
+  border-radius: 3px;
+  color: var(--md-error, #cf222e);
+  font-family: var(--md-mono);
+  font-size: 0.85em;
+  content: "⚠ " attr(data-src);
+}
+
+/* 图片保存、上传期间的占位（M-2） */
+#write .md-image-placeholder {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px dashed var(--md-border);
+  border-radius: 3px;
+  color: var(--md-muted);
+  font-size: 0.85em;
+}
+
+#write .md-image-placeholder::before {
+  content: "⏳ ";
+}
+
+/* 专注模式（V-1，F8）：只有光标所在的块正常显示，其他块变淡（类名同 Typora） */
+#write.on-focus-mode > :not(.md-focus):not(.md-focus-container),
+#write.on-focus-mode .md-focus-container > :not(.md-focus):not(.md-focus-container) {
+  opacity: 0.35;
+  transition: opacity 0.2s;
+}
+
+/* 大文档（X-3）：窗口外面的顶层块不排版、不绘制（浏览器按需排），输入、滚动只重排看得见的部分 */
+#write > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 2em;
+}

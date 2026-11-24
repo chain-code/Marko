@@ -1,0 +1,54 @@
+/*
+ * 深色（A-1）。用的时候给 <html> 加 dark 类（Element Plus 的暗色变量跟着生效，见 ui.css）
+ */
+@import "../fonts/open-sans.css";
+
+:root {
+  color-scheme: dark;
+  --md-background: #171a1f;
+  --md-text: #d9dde5;
+  --md-muted: #9aa1ad;
+  --md-link: #8ab8ff;
+  --md-border: #2b3038;
+  --md-heading-rule: #242930;
+  --md-hr: #2b3038;
+  --md-code-background: #202833;
+  --md-code-border: #2b3038;
+  --md-pre-background: #111820;
+  --md-quote-border: #3a414c;
+  --md-quote-text: #9aa1ad;
+  --md-table-stripe: #1d2127;
+  --md-mark-background: #6b5d00;
+  --md-kbd-border: #424954;
+  --md-kbd-background: #1d2127;
+  --md-selection: rgba(106, 166, 255, 0.28);
+  --md-alert-note: #4493f8;
+  --md-alert-tip: #3fb950;
+  --md-alert-important: #ab7df8;
+  --md-alert-warning: #d29922;
+  --md-alert-caution: #f85149;
+  --md-error: #f85149;
+  --md-tok-keyword: #c792ea;
+  --md-tok-string: #c3e88d;
+  --md-tok-number: #f78c6c;
+  --md-tok-comment: #7f8793;
+  --md-tok-variable: #d9dde5;
+  --md-tok-definition: #82aaff;
+  --md-tok-type: #ffcb6b;
+  --md-tok-property: #d9dde5;
+  --md-tok-operator: #89ddff;
+  --md-tok-meta: #9aa1ad;
+  --md-tok-tag: #f07178;
+  --md-tok-attribute: #ffcb6b;
+  --md-tok-link: #82aaff;
+  --md-tok-heading: #82aaff;
+  --md-tok-invalid: #ff5370;
+  --app-background: #101214;
+  --app-panel: #171a1f;
+  --app-panel-subtle: #1d2127;
+  --app-sidebar: #15181d;
+  --app-border: #2b3038;
+  --app-text: #e7e9ee;
+  --app-muted: #9aa1ad;
+  --app-accent: #6aa6ff;
+}

@@ -1,0 +1,21 @@
+{
+  "//": "渲染进程（Vue 应用）",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "vite/client"
+    ],
+    "jsx": "preserve"
+  },
+  "include": [
+    "renderer/**/*.ts",
+    "renderer/**/*.vue",
+    "renderer/**/*.json",
+    "../../packages/render/src/raw.d.ts"
+  ]
+}

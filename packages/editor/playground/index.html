@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>编辑器测试页</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+      .playground {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        height: 100%;
+      }
+      .playground-editor {
+        overflow: auto;
+      }
+      .playground-source {
+        margin: 0;
+        padding: 12px;
+        overflow: auto;
+        font: 12px/1.5 Consolas, "Courier New", monospace;
+        white-space: pre-wrap;
+        word-break: break-all;
+        background: #f6f8fa;
+        border-left: 1px solid #ddd;
+      }
+      .playground-source mark {
+        background: #ffd33d;
+      }
+      body.no-source .playground {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      body.no-source .playground-source {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="playground">
+      <div class="playground-editor">
+        <div id="write"></div>
+      </div>
+      <pre class="playground-source" id="source"></pre>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

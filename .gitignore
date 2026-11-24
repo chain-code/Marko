@@ -1,11 +1,16 @@
 node_modules/
 dist/
 dist-lib/
-src-tauri/target/
-src-tauri/gen/
-.tmp-tests/
 .DS_Store
 *.log
 
 # 本地临时文件（审计截图、浏览器 profile、vite 日志等）
 .tmp-*
+
+# 新代码的构建产物（docs/architecture.md 1.12 节）
+apps/desktop/out/
+apps/desktop/release/
+test/e2e/results/
+test/visual/.out/
+test/visual/results/
+packages/editor/test/interaction/results/
