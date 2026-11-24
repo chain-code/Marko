@@ -1,11 +1,21 @@
 name: Release
 
 # 推版本号标签（如 2.0.0）时发布（R 章）：三个平台各自用 electron-builder 打包，安装包、校验文件、
-# 自动更新用的 latest*.yml 和 blockmap 一起放进 GitHub Release，说明取 .github/release-notes/<版本>.md
+# 自动更新用的 latest*.yml 和 blockmap 一起放进 GitHub Release，说明取 .github/release-notes/<版本>.md。
+# 改了打包的配置推到 main 时只打包、检查，不发布：macOS、Linux 的打包平时没有别的地方跑
 on:
   push:
     tags:
       - "*.*.*"
+    branches:
+      - main
+    # 只对推到 main 起作用（推标签时不看 paths）
+    paths:
+      - .github/workflows/release.yml
+      - .github/scripts/**
+      - apps/desktop/electron-builder.yml
+      - apps/desktop/build/**
+      - apps/desktop/package.json
   workflow_dispatch:
 
 permissions:
@@ -48,7 +58,9 @@ jobs:
           - os: windows-latest
             artifact: windows-x64
             target: --win
-          - os: macos-14
+          # 要 Apple Silicon 的机器：npm 只装本机架构的原生子包（electron-builder.yml 拷的是 darwin-arm64 的）。
+          # 不写死版本：旧的 macOS 镜像会下线（macos-14 在 2026-11 下线），macos-latest 一直指向最新的 arm64 镜像
+          - os: macos-latest
             artifact: macos-arm64
             target: --mac
           - os: ubuntu-22.04
@@ -69,11 +81,11 @@ jobs:
         shell: bash
         env:
           # macOS 的签名证书、公证账号，只给 macOS 的任务；没配的 secret 是空字符串
-          MAC_CSC_LINK: ${{ matrix.os == 'macos-14' && secrets.MAC_CSC_LINK || '' }}
-          MAC_CSC_KEY_PASSWORD: ${{ matrix.os == 'macos-14' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
-          MAC_APPLE_ID: ${{ matrix.os == 'macos-14' && secrets.APPLE_ID || '' }}
-          MAC_APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.os == 'macos-14' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
-          MAC_APPLE_TEAM_ID: ${{ matrix.os == 'macos-14' && secrets.APPLE_TEAM_ID || '' }}
+          MAC_CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || '' }}
+          MAC_CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          MAC_APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          MAC_APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          MAC_APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
         run: |
           args=(${{ matrix.target }})
           if [[ "${RUNNER_OS}" == "macOS" ]]; then

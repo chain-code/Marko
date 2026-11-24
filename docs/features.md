@@ -988,7 +988,7 @@
 
 - 启动后检查新版本（S-13 可以关）；有新版本时后台下载，下载完提示「重启以更新」；「帮助 → 检查更新」手动检查。
 - 更新源是 GitHub Releases。
-- electron-updater（打进主进程）：只在安装好的版本里检查；启动后 10 秒检查（S-13 关着不查），有新版本后台下载，下载完问「要重启以更新吗」；「帮助 → 检查更新...」手动检查，有新版本、已经是最新的、出错了都提示。开发时运行、设了 `MARKO_NO_UPDATE` 的版本不检查（测试里不连 GitHub）。electron-builder 的 publish 是 GitHub（生成 latest.yml，安装包里带 app-update.yml）；本地打包 `--publish never`，发布由 CI 做（推版本号标签时，`.github/workflows/release.yml`）：三个平台各自打包，检查产物齐全（安装包、各自的校验文件、更新用的 yml）以后一起放进 GitHub Release；打包、检查失败时把输出的最后几十行写成标注（`.github/scripts/annotate-tail.mjs`），没有仓库管理权限、看不到运行日志也能看到出错的地方。
+- electron-updater（打进主进程）：只在安装好的版本里检查；启动后 10 秒检查（S-13 关着不查），有新版本后台下载，下载完问「要重启以更新吗」；「帮助 → 检查更新...」手动检查，有新版本、已经是最新的、出错了都提示。开发时运行、设了 `MARKO_NO_UPDATE` 的版本不检查（测试里不连 GitHub）。electron-builder 的 publish 是 GitHub（生成 latest.yml，安装包里带 app-update.yml）；本地打包 `--publish never`，发布由 CI 做（推版本号标签时，`.github/workflows/release.yml`）：三个平台各自打包，检查产物齐全（安装包、各自的校验文件、更新用的 yml）以后一起放进 GitHub Release；打包、检查失败时把输出的最后几十行写成标注（`.github/scripts/annotate-tail.mjs`），没有仓库管理权限、看不到运行日志也能看到出错的地方。改了打包的配置（这个工作流、`.github/scripts/`、`electron-builder.yml`、`apps/desktop/build/`、`apps/desktop/package.json`）推到 main 时也在三个平台上打一遍包、检查产物，不发布。macOS 用 `macos-latest`（Apple Silicon；不写死版本，旧的镜像会下线）。
 - 「重启以更新」先走 F-10 的挨个确认，窗口都关掉了才交给安装程序（安装程序会结束还在运行的应用，不能让它关掉开着的未保存确认框）；取消了不装。
 
 #### R-5 关于
