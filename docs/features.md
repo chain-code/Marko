@@ -977,18 +977,18 @@
 
 - Apple Silicon 的 `.dmg` 和 `.zip`；系统版本下限按所用 Electron 版本的要求（0.4 第 9 条）。
 - 签名和公证（发给普通用户需要）；登记文件关联（F-14）。
-- 二进制子包 darwin-arm64。签名、公证在发布流程里做（`.github/workflows/release.yml`）：配了 `MAC_CSC_LINK`、`MAC_CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 这几个 secret 才签名、公证，没配时出没有签名的包（自动更新在 macOS 上要签名才能用）。〔待确认〕还没在 macOS 上实际打包、安装过。
+- 二进制子包 darwin-arm64。签名、公证在发布流程里做（`.github/workflows/release.yml`）：配了 `MAC_CSC_LINK`、`MAC_CSC_KEY_PASSWORD` 这两个 secret 用证书签名，再配了 `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 就公证；没配证书时做 ad-hoc 签名（`-c.mac.identity=-`，不开 hardened runtime：ad-hoc 签名没有 Team ID，它的库校验会拒绝加载 Electron 的框架）。不能不签：electron-builder 找不到证书时整个跳过签名，改 Fuses 又改了二进制，原来的签名失效，Apple Silicon 上打不开。ad-hoc 签名的版本第一次打开要在「系统设置 > 隐私与安全性」里确认，也不能自动更新（Squirrel.Mac 要求新版本的签名和装着的版本对得上）。打完包用 `codesign --verify --deep --strict` 校验整个 .app。〔待确认〕还没在 macOS 上实际安装、运行过。
 
 #### R-3 Linux
 
 - x64 的 AppImage 和 deb；用 `.desktop` 文件和 MIME 类型登记文件关联（0.4 第 8 条）。
-- 二进制子包 linux-x64-glibc、ripgrep-linux-x64；可执行文件、deb 的包名是 `marko`（包名 `@marko/desktop` 不能直接用），deb 的维护者写 `chain-code`。.desktop 的 `%U` 交过来的是 `file://` 地址（F-14）。〔待确认〕还没在 Linux 上实际打包、安装过。
+- 二进制子包 linux-x64-glibc、ripgrep-linux-x64；可执行文件、deb 的包名是 `marko`，deb 的文件名是 `marko_<版本>_amd64.deb`（包名 `@marko/desktop` 不能直接用：文件名默认按它取，带斜杠），deb 的维护者写 `chain-code`。.desktop 的 `%U` 交过来的是 `file://` 地址（F-14）。〔待确认〕还没在 Linux 上实际安装、运行过。
 
 #### R-4 自动更新
 
 - 启动后检查新版本（S-13 可以关）；有新版本时后台下载，下载完提示「重启以更新」；「帮助 → 检查更新」手动检查。
 - 更新源是 GitHub Releases。
-- electron-updater（打进主进程）：只在安装好的版本里检查；启动后 10 秒检查（S-13 关着不查），有新版本后台下载，下载完问「要重启以更新吗」；「帮助 → 检查更新...」手动检查，有新版本、已经是最新的、出错了都提示。开发时运行、设了 `MARKO_NO_UPDATE` 的版本不检查（测试里不连 GitHub）。electron-builder 的 publish 是 GitHub（生成 latest.yml，安装包里带 app-update.yml）；本地打包 `--publish never`，发布由 CI 做（推版本号标签时，`.github/workflows/release.yml`）。
+- electron-updater（打进主进程）：只在安装好的版本里检查；启动后 10 秒检查（S-13 关着不查），有新版本后台下载，下载完问「要重启以更新吗」；「帮助 → 检查更新...」手动检查，有新版本、已经是最新的、出错了都提示。开发时运行、设了 `MARKO_NO_UPDATE` 的版本不检查（测试里不连 GitHub）。electron-builder 的 publish 是 GitHub（生成 latest.yml，安装包里带 app-update.yml）；本地打包 `--publish never`，发布由 CI 做（推版本号标签时，`.github/workflows/release.yml`）：三个平台各自打包，检查产物齐全（安装包、各自的校验文件、更新用的 yml）以后一起放进 GitHub Release；打包、检查失败时把输出的最后几十行写成标注（`.github/scripts/annotate-tail.mjs`），没有仓库管理权限、看不到运行日志也能看到出错的地方。
 - 「重启以更新」先走 F-10 的挨个确认，窗口都关掉了才交给安装程序（安装程序会结束还在运行的应用，不能让它关掉开着的未保存确认框）；取消了不装。
 
 #### R-5 关于

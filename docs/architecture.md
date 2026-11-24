@@ -537,6 +537,7 @@ scripts/         编辑器库的类型声明（build-library-types.mjs）、在�
 docs/            architecture.md（本文件）、features.md（功能清单）、重构计划.md（重构的记录）
 .github/
   workflows/     ci.yml（每个 PR）、release.yml（打 tag）
+  scripts/       工作流用的脚本：annotate-tail.mjs（失败时把日志的最后几十行写成标注）
   release-notes/ 每个版本的发布说明
 ```
 

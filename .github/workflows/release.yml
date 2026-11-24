@@ -63,17 +63,70 @@ jobs:
           cache: npm
       # 各平台的原生模块（@parcel/watcher）、ripgrep 由 npm 按当前平台装上
       - run: npm ci
+      # 构建（含主进程产物的检查）后打包；发布由下面的 publish 统一做
       - name: 打包
         working-directory: apps/desktop
+        shell: bash
         env:
-          # macOS 签名和公证：配了这几个 secret 才做；没配时出没有签名的包（electron-builder 做 ad-hoc 签名）
-          CSC_LINK: ${{ matrix.os == 'macos-14' && secrets.MAC_CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ matrix.os == 'macos-14' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
-          APPLE_ID: ${{ matrix.os == 'macos-14' && secrets.APPLE_ID || '' }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.os == 'macos-14' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ matrix.os == 'macos-14' && secrets.APPLE_TEAM_ID || '' }}
-        # 构建（含主进程产物的检查）后打包；发布由下面的 publish 统一做
-        run: npm run dist -- ${{ matrix.target }}
+          # macOS 的签名证书、公证账号，只给 macOS 的任务；没配的 secret 是空字符串
+          MAC_CSC_LINK: ${{ matrix.os == 'macos-14' && secrets.MAC_CSC_LINK || '' }}
+          MAC_CSC_KEY_PASSWORD: ${{ matrix.os == 'macos-14' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          MAC_APPLE_ID: ${{ matrix.os == 'macos-14' && secrets.APPLE_ID || '' }}
+          MAC_APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.os == 'macos-14' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          MAC_APPLE_TEAM_ID: ${{ matrix.os == 'macos-14' && secrets.APPLE_TEAM_ID || '' }}
+        run: |
+          args=(${{ matrix.target }})
+          if [[ "${RUNNER_OS}" == "macOS" ]]; then
+            if [[ -n "${MAC_CSC_LINK}" ]]; then
+              # 有证书：签名；再配了 Apple ID 就公证。CSC_LINK 不能设成空字符串：electron-builder 会把它当成证书的路径（解析成当前目录，报 not a file）
+              export CSC_LINK="${MAC_CSC_LINK}" CSC_KEY_PASSWORD="${MAC_CSC_KEY_PASSWORD}"
+              if [[ -n "${MAC_APPLE_ID}" ]]; then
+                export APPLE_ID="${MAC_APPLE_ID}" APPLE_APP_SPECIFIC_PASSWORD="${MAC_APPLE_APP_SPECIFIC_PASSWORD}" APPLE_TEAM_ID="${MAC_APPLE_TEAM_ID}"
+              fi
+            else
+              # 没有证书：ad-hoc 签名。electron-builder 找不到证书时整个跳过签名，而改 Fuses 改了二进制、原来的签名就失效了，
+              # Apple Silicon 上签名无效的程序打不开。ad-hoc 签名没有 Team ID，hardened runtime 的库校验会拒绝加载 Electron 的框架，所以不开
+              args+=(-c.mac.identity=- -c.mac.hardenedRuntime=false)
+            fi
+          fi
+          log="${RUNNER_TEMP}/dist.log"
+          if ! npm run dist -- "${args[@]}" 2>&1 | tee "${log}"; then
+            node ../../.github/scripts/annotate-tail.mjs "${log}" "打包失败（${RUNNER_OS}）"
+            exit 1
+          fi
+      # 这个平台的安装包、更新用的 yml 都在，每个安装包有校验文件；macOS 上再校验整个 .app 的签名
+      - name: 检查产物
+        working-directory: apps/desktop/release
+        shell: bash
+        run: |
+          case "${RUNNER_OS}" in
+            Windows) patterns=("*-setup.exe" "latest.yml") ;;
+            macOS) patterns=("*.dmg" "*-mac.zip" "latest-mac.yml") ;;
+            Linux) patterns=("*.AppImage" "*.deb" "latest-linux.yml") ;;
+          esac
+          for pattern in "${patterns[@]}"; do
+            if ! compgen -G "${pattern}" > /dev/null; then
+              echo "::error title=缺少产物（${RUNNER_OS}）::release 目录里没有 ${pattern}"
+              exit 1
+            fi
+          done
+          for file in *.exe *.dmg *.zip *.AppImage *.deb; do
+            if [[ -e "${file}" && ! -f "${file}.sha256" ]]; then
+              echo "::error title=缺少校验文件（${RUNNER_OS}）::${file}.sha256"
+              exit 1
+            fi
+          done
+          if [[ "${RUNNER_OS}" == "macOS" ]]; then
+            log="${RUNNER_TEMP}/codesign.log"
+            if ! codesign --verify --deep --strict --verbose=2 mac-arm64/Marko.app > "${log}" 2>&1; then
+              node ../../../.github/scripts/annotate-tail.mjs "${log}" "macOS 签名校验失败"
+              exit 1
+            fi
+            # 签名的种类（adhoc 还是证书）、Team ID、hardened runtime 写成提示
+            codesign --display --verbose=2 mac-arm64/Marko.app > "${log}" 2>&1
+            node ../../../.github/scripts/annotate-tail.mjs "${log}" "macOS 签名" notice
+          fi
+          ls -l
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

@@ -90,7 +90,7 @@ SHA-256 checksum files are published alongside the installation packages. Once i
 > Marko 2.0 does not import settings, recent files, or drafts from 1.x. Save all documents before upgrading.
 
 > [!NOTE]
-> If the macOS package is unsigned, macOS may ask for confirmation in **System Settings > Privacy & Security** the first time you open it.
+> If the macOS package is unsigned, macOS may ask for confirmation in **System Settings > Privacy & Security** the first time you open it, and automatic updates are not available on macOS; download new versions from GitHub Releases.
 
 ## Features
 

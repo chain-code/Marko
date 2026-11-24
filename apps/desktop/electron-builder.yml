@@ -76,6 +76,8 @@ nsis:
   artifactName: ${productName}-${version}-x64-setup.${ext}
 deb:
   packageName: marko
+  # 默认的文件名按 package.json 的 name 取，@marko/desktop 带斜杠（成了 release/@marko/ 下的文件）；按 Debian 的习惯用包名
+  artifactName: marko_${version}_${arch}.${ext}
 mac:
   target:
     - target: dmg
