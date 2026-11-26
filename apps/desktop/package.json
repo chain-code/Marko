@@ -1,7 +1,7 @@
 {
   "name": "@marko/desktop",
   "productName": "Marko",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "type": "module",
   "description": "Marko：本地优先的 Markdown 编辑器",
