@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { launchApp } from "./app.ts";
+import { desktopDir, launchApp } from "./app.ts";
 
 test("应用能启动：空白新文档、预加载接口、Element Plus 可用", async () => {
   const launched = await launchApp();
@@ -8,7 +10,9 @@ test("应用能启动：空白新文档、预加载接口、Element Plus 可用"
     await window.waitForSelector("#write");
     // 窗口标题（F-17）
     await expect.poll(() => launched.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.getTitle())).toBe("未命名.md - Marko");
-    expect(await window.evaluate(() => window.marko.app.version())).toMatch(/^2\.0\.0/);
+    // 版本号取应用自己的 package.json（发版改版本号时不用改测试）
+    const { version } = JSON.parse(readFileSync(join(desktopDir, "package.json"), "utf8")) as { version: string };
+    expect(await window.evaluate(() => window.marko.app.version())).toBe(version);
     await expect(window.getByTestId("status-bar")).toContainText("尚未保存到磁盘");
     // Element Plus 的变量（ui.css、组件样式）加载了
     const primary = await window.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--el-color-primary").trim());

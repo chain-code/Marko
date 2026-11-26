@@ -22,21 +22,31 @@ async function menu(app: LaunchedApp, id: string): Promise<void> {
   await app.app.evaluate(({ BrowserWindow }, command) => BrowserWindow.getAllWindows()[0]?.webContents.send("marko:menu.command", { id: command }), id);
 }
 
-/** 点原生菜单里的这一项（同用户点菜单） */
+/**
+ * 点原生菜单里的这一项（同用户点菜单）。放到主进程的下一个任务里点：evaluate 可能插在主进程正在跑的同步代码中间执行
+ * （调试协议用 V8 的中断），直接在这里点，会插进别的设置读写中间（读了旧值的那次写入把这次的改动盖掉）；用户的点击是排队的，不会这样
+ */
 async function clickMenuItem(app: LaunchedApp, label: string): Promise<void> {
-  await app.app.evaluate(({ BrowserWindow, Menu }, wanted) => {
-    const find = (items: Electron.MenuItem[]): Electron.MenuItem | null => {
-      for (const item of items) {
-        if (item.label === wanted) return item;
-        const nested = item.submenu ? find(item.submenu.items) : null;
-        if (nested) return nested;
-      }
-      return null;
-    };
-    const item = find(Menu.getApplicationMenu()?.items ?? []);
-    if (!item) throw new Error(`菜单里没有「${wanted}」`);
-    item.click(undefined, BrowserWindow.getAllWindows()[0]);
-  }, label);
+  await app.app.evaluate(
+    ({ BrowserWindow, Menu }, wanted) =>
+      new Promise<void>((resolve, reject) => {
+        setImmediate(() => {
+          const find = (items: Electron.MenuItem[]): Electron.MenuItem | null => {
+            for (const item of items) {
+              if (item.label === wanted) return item;
+              const nested = item.submenu ? find(item.submenu.items) : null;
+              if (nested) return nested;
+            }
+            return null;
+          };
+          const item = find(Menu.getApplicationMenu()?.items ?? []);
+          if (!item) return reject(new Error(`菜单里没有「${wanted}」`));
+          item.click(undefined, BrowserWindow.getAllWindows()[0]);
+          resolve();
+        });
+      }),
+    label,
+  );
 }
 
 test("V-4、R-5：字数统计同 Typora（中文一个字一个词，字符、行按原文）、光标行列；关于里有版本和许可证", async () => {

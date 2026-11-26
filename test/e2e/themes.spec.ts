@@ -25,20 +25,28 @@ async function menuLabels(app: LaunchedApp, top: string): Promise<string[]> {
   }, top);
 }
 
+/** 点原生菜单里的这一项：放到主进程的下一个任务里点，不插在主进程正在跑的代码中间（见 view.spec.ts 的 clickMenuItem） */
 async function clickMenuItem(app: LaunchedApp, label: string): Promise<void> {
-  await app.app.evaluate(({ BrowserWindow, Menu }, wanted) => {
-    const find = (items: Electron.MenuItem[]): Electron.MenuItem | null => {
-      for (const item of items) {
-        if (item.label === wanted) return item;
-        const nested = item.submenu ? find(item.submenu.items) : null;
-        if (nested) return nested;
-      }
-      return null;
-    };
-    const item = find(Menu.getApplicationMenu()?.items ?? []);
-    if (!item) throw new Error(`菜单里没有「${wanted}」`);
-    item.click(undefined, BrowserWindow.getAllWindows()[0]);
-  }, label);
+  await app.app.evaluate(
+    ({ BrowserWindow, Menu }, wanted) =>
+      new Promise<void>((resolve, reject) => {
+        setImmediate(() => {
+          const find = (items: Electron.MenuItem[]): Electron.MenuItem | null => {
+            for (const item of items) {
+              if (item.label === wanted) return item;
+              const nested = item.submenu ? find(item.submenu.items) : null;
+              if (nested) return nested;
+            }
+            return null;
+          };
+          const item = find(Menu.getApplicationMenu()?.items ?? []);
+          if (!item) return reject(new Error(`菜单里没有「${wanted}」`));
+          item.click(undefined, BrowserWindow.getAllWindows()[0]);
+          resolve();
+        });
+      }),
+    label,
+  );
 }
 
 test("A-1、A-3：内置主题；用户主题放进主题目录就出现在菜单里，选了马上生效；user.css 加在后面；导出带上同一份样式", async () => {

@@ -76,9 +76,10 @@ test("F-9：异常退出以后再启动，按草稿恢复没保存的改动；�
   await launched.crash();
   launched = await launchApp([], { userData });
   const restored = await launched.app.firstWindow();
+  // 提示只显示 3 秒：先看它，再看内容和标题（机器慢时等标题的工夫提示已经没了）
+  await expect(restored.locator(".el-message").last()).toContainText("已从草稿恢复");
   await expect(restored.locator("#write p")).toHaveText("baseEDIT");
   await expect.poll(() => windowTitle(launched!)).toBe("b.md• - Marko");
-  await expect(restored.locator(".el-message").last()).toContainText("已从草稿恢复");
   expect(readFileSync(file, "utf8")).toBe("base\n");
 
   await menu(launched, "file.save");
