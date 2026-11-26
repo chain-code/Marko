@@ -2,7 +2,7 @@
 // 监听增删（W-2，@parcel/watcher），变了通知用这个工作区的窗口重新列
 import { readdir } from "node:fs/promises";
 import { extname, join } from "node:path";
-import { subscribe, type AsyncSubscription, type Event as WatcherEvent } from "@parcel/watcher";
+import { subscribe, type AsyncSubscription, type BackendType, type Event as WatcherEvent } from "@parcel/watcher";
 import { BrowserWindow } from "electron";
 import { EVENTS, type Workspace, type WorkspaceEntry } from "@marko/shared";
 
@@ -79,6 +79,12 @@ interface Watched {
 const watchers = new Map<string, Watched>();
 const tracked = new WeakSet<BrowserWindow>();
 
+/**
+ * 各平台直接用系统的监听接口：不指定时它先找 watchman（Windows、Linux 上起一个进程去问），订阅是同步的，主进程一直等着——
+ * 打开文件时侧栏跟着打开它所在的文件夹（W-1），每次都卡一下（本机 0.2 秒，CI 上更久）
+ */
+const BACKENDS: Partial<Record<NodeJS.Platform, BackendType>> = { win32: "windows", darwin: "fs-events", linux: "inotify" };
+
 /** 以 . 开头的、依赖目录里的增删不管（文件树里本来就不列） */
 const HIDDEN = /(^|[\\/])(\.[^\\/]+|node_modules)([\\/]|$)/;
 
@@ -115,7 +121,7 @@ export function watchWorkspace(window: BrowserWindow, root: string, skipped: str
           notify(root);
         }, 300);
       },
-      { ignore: skipped },
+      { ignore: skipped, backend: BACKENDS[process.platform] },
     ).catch(() => null);
     watchers.set(root, created);
     entry = created;
