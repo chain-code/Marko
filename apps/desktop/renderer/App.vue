@@ -2,7 +2,8 @@
   <ElConfigProvider :locale="elementLocale">
     <div class="marko-app">
       <ElSplitter class="marko-app-main" @resize-end="rememberSidebarWidth">
-        <ElSplitterPanel v-if="sidebarVisible" v-model:size="sidebarWidth" :min="160" :max="600">
+        <!-- 源代码模式里不显示侧栏（同 Typora），退出后照旧 -->
+        <ElSplitterPanel v-if="sidebarVisible && !sourceMode" v-model:size="sidebarWidth" :min="160" :max="600">
           <SideBar
             ref="sideBar"
             v-model:tab="sidebarTab"
@@ -14,16 +15,19 @@
             :outline="outline"
             :current-heading="currentHeading"
             :collapsible-outline="settings.collapsibleOutline"
-            @open-folder="workspaceState.pickAndOpen()"
+            @open-folder="void openFolder()"
             @open-file="(target) => session.switchTo(target)"
             @open-match="openMatch"
             @select-heading="jumpToHeading"
             @contextmenu="(entry) => fileActions.showContextMenu(entry, entry.kind === 'folder' || fileView === 'tree' ? 'tree' : 'list')"
+            @new-file="(folder) => void fileActions.createFile(folder)"
+            @reveal-folder="(folder) => void api.shell.openFolder(folder)"
+            @refresh="void workspaceState.refresh()"
           />
         </ElSplitterPanel>
         <ElSplitterPanel>
           <div class="marko-app-document">
-            <FindBar ref="findBar" :editor="editorInstance" :visible="findMode !== null" :mode="findMode ?? 'find'" :content="content" @close="findMode = null" />
+            <FindBar ref="findBar" :editor="editorInstance" :visible="findMode !== null" :mode="findMode ?? 'find'" :content="content" @close="findMode = null" @switch-mode="(mode) => (findMode = mode)" />
             <MarkoEditor
               ref="editorView"
               v-model="content"
@@ -46,7 +50,22 @@
               :uncertain-encoding="session.uncertainEncoding.value"
               :notice="dialogs.notice.value"
               :show-word-count="settings.alwaysShowWordCount"
+              :sidebar-visible="sidebarVisible"
+              :source-mode="sourceMode"
+              :metric="settings.wordCountMetric"
+              :reading-speed="settings.readingSpeed"
               @open-word-count="run('view.wordCount')"
+              @toggle-sidebar="run('view.sidebar')"
+              @toggle-source-mode="run('view.sourceMode')"
+            />
+            <!-- V-4：状态栏右上方的字数统计（同 Typora） -->
+            <WordCountPopover
+              v-model:visible="wordCountVisible"
+              :editor="editorInstance"
+              :content="content"
+              :reading-speed="settings.readingSpeed"
+              :metric="settings.wordCountMetric"
+              @update:metric="(metric) => updateSettings({ wordCountMetric: metric })"
             />
           </div>
         </ElSplitterPanel>
@@ -60,13 +79,13 @@
         @open="(target) => session.openPath(target, { fromRecent: true })"
         @contextmenu="(target) => fileActions.showContextMenu({ kind: 'file', path: target }, 'recent')"
       />
-      <WordCountDialog v-model:visible="wordCountVisible" :editor="editorInstance" :reading-speed="settings.readingSpeed" />
       <AboutDialog v-model:visible="aboutVisible" :load-version="() => api.app.version()" @open-homepage="(url) => api.shell.openExternal(url)" />
-      <SettingsDialog v-model:visible="settingsVisible" :settings="settings" :themes="themes?.themes ?? []" :token-set="uploadTokenSet"
+      <SettingsDialog v-model:visible="settingsVisible" :settings="settings" :themes="themes?.themes ?? []" :token-set="uploadTokenSet" :section="settingsSection"
         :words="dictionaryWords"
         @change="(patch) => updateSettings(patch)"
         @token="setUploadToken"
         @remove-word="removeDictionaryWord"
+        @action="onSettingsAction"
       />
     </div>
   </ElConfigProvider>
@@ -74,7 +93,7 @@
 
 <script setup lang="ts">
 // 应用界面：布局和组装，不放业务（1.3 节）。菜单命令（menu.command）在这里分给文档会话、编辑器
-import { getMarkdownWithSelection, insertMedia, jumpToAnchor, linkAt, openLink, selectSource, toModel, type MediaInsert } from "@marko/editor";
+import { centerSelection, deleteForward, getMarkdownWithSelection, insertMedia, jumpToAnchor, linkAt, openLink, selectSource, toModel, type MediaInsert } from "@marko/editor";
 import { MarkoEditor, type OutlineItem } from "@marko/editor-vue";
 import type { Editor } from "@tiptap/core";
 import {
@@ -101,7 +120,8 @@ import FindBar from "./components/FindBar.vue";
 import QuickOpen from "./components/QuickOpen.vue";
 import RecentFiles from "./components/RecentFiles.vue";
 import SettingsDialog from "./components/settings/SettingsDialog.vue";
-import WordCountDialog from "./components/WordCountDialog.vue";
+import type { SettingsAction } from "./components/settings/settingsForm.ts";
+import WordCountPopover from "./components/WordCountPopover.vue";
 import AboutDialog from "./components/AboutDialog.vue";
 import StatusBar from "./components/StatusBar.vue";
 import { useWorkspace } from "./composables/useWorkspace.ts";
@@ -257,7 +277,7 @@ const { hint: dropHint } = useDropOpen(api, {
   },
 });
 const fileView = ref<FileView>("tree");
-const sidebarWidth = ref<number | string>(260);
+const sidebarWidth = ref<number | string>(240);
 const sideBar = ref<InstanceType<typeof SideBar> | null>(null);
 
 // 字数统计（V-4）、关于（R-5）
@@ -266,6 +286,8 @@ const aboutVisible = ref(false);
 
 // 偏好设置（S-1）；上传 Token 只知道有没有填（M-4）
 const settingsVisible = ref(false);
+/** 打开偏好设置时先显示的一节（「导出 → 导出设置…」，X-6） */
+const settingsSection = ref<string | null>(null);
 const uploadTokenSet = ref(false);
 /** S-10 用户词典里的词：打开偏好设置时读一次 */
 const dictionaryWords = ref<string[]>([]);
@@ -289,9 +311,16 @@ async function showUpdateStatus(status: UpdateStatus): Promise<void> {
   else dialogs.info(t(`update.${status.kind}`, { version: status.version }));
 }
 
-async function openSettings(): Promise<void> {
+async function openSettings(section: string | null = null): Promise<void> {
+  settingsSection.value = section;
   [uploadTokenSet.value, dictionaryWords.value] = await Promise.all([api.upload.hasToken(), api.spellcheck.words()]);
   settingsVisible.value = true;
+}
+/** 偏好设置里的按钮（S-1，同 Typora）：清除历史文件记录、打开主题文件夹、关闭打字机模式和专注模式 */
+function onSettingsAction(action: SettingsAction): void {
+  if (action === "clearRecent") void api.recent.clear();
+  else if (action === "openThemeFolder") void api.themes.openFolder();
+  else void updateSettings({ focusMode: false, typewriterMode: false });
 }
 async function removeDictionaryWord(word: string): Promise<void> {
   await api.spellcheck.removeWord(word);
@@ -323,7 +352,7 @@ function reportLayout(): void {
     const width = typeof sidebarWidth.value === "number" ? sidebarWidth.value : Number.parseInt(String(sidebarWidth.value), 10);
     void api.window.setLayout({
       sidebarVisible: sidebarVisible.value,
-      sidebarWidth: Math.min(1_000, Math.max(120, Math.round(Number.isFinite(width) ? width : 260))),
+      sidebarWidth: Math.min(1_000, Math.max(120, Math.round(Number.isFinite(width) ? width : 240))),
       sidebarTab: sidebarTab.value,
       fileView: fileView.value,
     });
@@ -333,6 +362,16 @@ watch([sidebarVisible, sidebarTab, fileView], reportLayout);
 /** 拖动侧栏边缘结束（ElSplitter 的 resize-end） */
 function rememberSidebarWidth(): void {
   reportLayout();
+}
+
+/** 「文件 → 打开文件夹…」（W-1）：打开以后侧栏显示出来、切到文件页签（同 Typora） */
+async function openFolder(): Promise<void> {
+  const before = workspaceState.workspace.value;
+  await workspaceState.pickAndOpen();
+  if (workspaceState.workspace.value && workspaceState.workspace.value !== before) {
+    sidebarVisible.value = true;
+    sidebarTab.value = "files";
+  }
 }
 
 /** 原文里第 line 行（从 1 开始）开头的偏移；没有这一行时是 null */
@@ -434,6 +473,21 @@ function editor(): Editor | null {
   return editorInstance.value;
 }
 
+/** 「编辑 → 选择」里跳到行首、行尾、文首、文末，扩展选区（X-6）：交给浏览器按行、按文档的边界移动，ProseMirror 跟着 DOM 的选区 */
+function moveCaret(alter: "move" | "extend", direction: "backward" | "forward", granularity: "lineboundary" | "documentboundary"): void {
+  const instance = editor();
+  if (!instance) return;
+  instance.view.focus();
+  window.getSelection()?.modify(alter, direction, granularity);
+}
+
+/** 「格式 → 链接操作 → 复制链接地址」（I-2）：光标所在链接的地址 */
+function copyLinkAddress(): void {
+  const instance = editor();
+  const url = instance ? linkAt(instance.state, instance.state.selection.head, instance.storage.marko.host) : null;
+  if (url) void navigator.clipboard.writeText(url);
+}
+
 /** 菜单命令：应用的动作，其余当编辑器命令的名字 */
 function run(id: string, argument?: string): void {
   switch (id) {
@@ -455,8 +509,9 @@ function run(id: string, argument?: string): void {
     case "app.preferences":
       void openSettings();
       return;
+    // 「视图 → 字数统计窗口」、点状态栏的字数：开、关（同 Typora）
     case "view.wordCount":
-      wordCountVisible.value = true;
+      wordCountVisible.value = !wordCountVisible.value;
       return;
     case "app.about":
       aboutVisible.value = true;
@@ -492,12 +547,54 @@ function run(id: string, argument?: string): void {
       if (focusedInput()) document.execCommand("insertText", false, argument);
       else editor()?.commands.pastePlainText(argument);
       return;
-    // F-13：「文件 → 文件操作」
+    // F-13：「文件 → 文件操作」；「文件 → 打开文件位置…」「删除…」（X-6）
     case "file.rename":
     case "file.copyPath":
     case "file.reveal":
     case "file.openFolder":
-      void fileActions.currentFileAction(id.slice("file.".length) as "rename" | "copyPath" | "reveal" | "openFolder");
+    case "file.trash":
+      void fileActions.currentFileAction(id.slice("file.".length) as "rename" | "copyPath" | "reveal" | "openFolder" | "trash");
+      return;
+    // C-2：复制为纯文本、Markdown、HTML 代码
+    case "edit.copyAsText":
+    case "edit.copyAsMarkdown":
+    case "edit.copyAsHtml":
+      editor()?.commands.copyAs(id === "edit.copyAsText" ? "text" : id === "edit.copyAsMarkdown" ? "markdown" : "html");
+      return;
+    // X-6：「编辑 → 删除」「编辑 → 选择」里的跳转
+    case "edit.delete": {
+      const instance = editor();
+      if (instance) deleteForward(instance);
+      return;
+    }
+    case "edit.jumpTop":
+      editor()?.chain().focus("start").scrollIntoView().run();
+      return;
+    case "edit.jumpBottom":
+      editor()?.chain().focus("end").scrollIntoView().run();
+      return;
+    case "edit.jumpSelection": {
+      const instance = editor();
+      if (instance) centerSelection(instance.view);
+      return;
+    }
+    case "edit.lineStart":
+    case "edit.lineEnd":
+      moveCaret("move", id === "edit.lineStart" ? "backward" : "forward", "lineboundary");
+      return;
+    case "edit.extendTop":
+    case "edit.extendBottom":
+      moveCaret("extend", id === "edit.extendTop" ? "backward" : "forward", "documentboundary");
+      return;
+    case "edit.extendLineStart":
+    case "edit.extendLineEnd":
+      moveCaret("extend", id === "edit.extendLineStart" ? "backward" : "forward", "lineboundary");
+      return;
+    case "editor.copyLink":
+      copyLinkAddress();
+      return;
+    case "view.statusBar":
+      void updateSettings({ showStatusBar: !settings.value.showStatusBar });
       return;
     case "view.sourceMode":
       sourceMode.value = !sourceMode.value;
@@ -539,7 +636,7 @@ function run(id: string, argument?: string): void {
       void nextTick(() => sideBar.value?.focusSearch());
       return;
     case "workspace.open":
-      void workspaceState.pickAndOpen();
+      void openFolder();
       return;
     // W-1：「文件 → 工作区」
     case "workspace.openContaining":
@@ -572,7 +669,7 @@ function run(id: string, argument?: string): void {
       void workspaceState.refresh();
       return;
     case "workspace.close":
-      void workspaceState.close();
+      void workspaceState.close(path.value);
       return;
     // 「段落 → 表格 → 插入表格...」：同 Ctrl+T 的小窗口（T-1）
     case "table.insert":
@@ -589,6 +686,12 @@ function run(id: string, argument?: string): void {
       return;
     case "export.last":
       void exportLast();
+      return;
+    case "export.previous":
+      void exportPrevious();
+      return;
+    case "app.exportSettings":
+      void openSettings("export");
       return;
     case "file.print":
       void printDocument();
@@ -650,6 +753,13 @@ async function exportAs(format: ExportFormat, options: { path?: string } = {}): 
   const result = await api.export.run(request);
   if (!result.ok) dialogs.error(t("export.failed", { message: result.error.message }));
   else if (result.value) dialogs.info(t("export.done", { path: result.value.path }));
+}
+
+/** O-7「使用上一次设置导出」：按这个文档上次的格式导出，问保存的位置 */
+async function exportPrevious(): Promise<void> {
+  const last = path.value ? await api.export.last(path.value) : null;
+  if (!last) dialogs.info(t("export.noLast"));
+  else await exportAs(last.format);
 }
 
 /** O-7：按这个文档上次的格式和位置直接导出 */
@@ -721,7 +831,11 @@ onMounted(async () => {
     sidebarTab.value = settings.value.defaultSidebarTab;
   }
   layoutReady = true;
-  if (state.workspace) void workspaceState.open(state.workspace);
+  // 恢复的、从别的窗口沿用的工作区先打开好，再让侧栏跟着当前文件（W-1，同 Typora：没有主动打开文件夹时显示当前文件所在的文件夹）。
+  // 主进程按它记着的这个窗口的路径打开文件夹：等 useDocument 把新路径报上去（它的 watch 在组件里，先跑）再请求；
+  // 这里在 await 之后，watch 不属于组件，默认会排到最前面
+  if (state.workspace) await workspaceState.open(state.workspace);
+  watch(path, (value) => void workspaceState.followDocument(value), { immediate: true, flush: "post" });
   // 异常退出以后按草稿开的窗口：恢复草稿（F-9）；否则是要显示的文档（F-3、F-14）
   const draft = await api.window.initialDraft();
   if (draft) await session.restoreDraft(draft);
@@ -763,6 +877,7 @@ body {
 }
 
 .marko-app-document {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;

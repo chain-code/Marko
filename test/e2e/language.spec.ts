@@ -19,7 +19,7 @@ test.afterEach(async () => {
 });
 
 async function menuTitles(app: LaunchedApp): Promise<string[]> {
-  return app.app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items.map((item) => item.label) ?? []);
+  return app.app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items.map((item) => item.label.replace(/\u200b/g, "")) ?? []);
 }
 
 async function menu(app: LaunchedApp, id: string): Promise<void> {
@@ -34,22 +34,23 @@ test("L-2：换成 English 马上生效（菜单、界面、编辑器的占位�
   const window = await app.app.firstWindow();
   await window.waitForSelector("#write h1");
   const titles = await menuTitles(app);
-  expect(titles).toContain("文件");
+  // X-6：Windows、Linux 上顶层菜单带 Alt 的访问键（同 Typora）
+  expect(titles).toContain(process.platform === "darwin" ? "文件" : "文件(&F)");
 
-  // 偏好设置 → 语言与拼写 → 界面语言选 English
+  // 偏好设置 → 通用 → 语言选 English
   await menu(app, "app.preferences");
   const dialog = window.locator(".marko-settings");
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("tab", { name: "语言与拼写" }).click();
-  await dialog.locator('[data-setting="language"] .el-select').click();
-  await window.locator(".el-select-dropdown__item", { hasText: "English" }).click();
+  await dialog.getByRole("tab", { name: "通用" }).click();
+  await dialog.locator('[data-setting="language"] select').selectOption({ label: "English" });
 
-  await expect.poll(() => menuTitles(app)).toEqual(expect.arrayContaining(["File", "Edit", "Paragraph", "Format", "View", "Themes", "Help"]));
-  await expect(dialog.locator(".el-dialog__title")).toHaveText("Preferences");
-  await expect(dialog.getByRole("tab", { name: "Language & Spelling" })).toBeVisible();
+  await expect.poll(() => menuTitles(app)).toEqual(expect.arrayContaining(process.platform === "darwin" ? ["File", "Edit", "Paragraph", "Format", "View", "Themes", "Help"] : ["&File", "&Edit", "&Paragraph", "F&ormat", "&View", "&Themes", "&Help"]));
+  await expect(dialog.locator(".settings-title")).toHaveText("Preferences");
+  await expect(dialog.getByRole("tab", { name: "General" })).toBeVisible();
   await expect(window.locator("html")).toHaveAttribute("lang", "en");
-  await dialog.getByRole("button", { name: "Done" }).click();
-  await expect(window.getByTestId("word-count")).toHaveText(/^\d+ words$/);
+  await dialog.getByTestId("settings-close").click();
+  // 同 Typora 的英文：1 Word、2 Words
+  await expect(window.getByTestId("word-count")).toHaveText(/^\d+ Words?$/);
 
   // 编辑器插进文档的占位：插入表格的小窗口、表头
   await window.locator("#write h1").click();
@@ -65,9 +66,9 @@ test("L-2：换成 English 马上生效（菜单、界面、编辑器的占位�
   // 存进了设置；换回中文
   expect(await window.evaluate(async () => (await window.marko.settings.get()).language)).toBe("en");
   await window.evaluate(() => window.marko.settings.set({ language: "zh-CN" }));
-  await expect.poll(() => menuTitles(app)).toContain("文件");
-  // 插入表格后选中了表头：显示的是选区的字数
-  await expect(window.getByTestId("word-count")).toHaveText(/^已选 \d+ 词$/);
+  await expect.poll(() => menuTitles(app)).toContain(process.platform === "darwin" ? "文件" : "文件(&F)");
+  // 插入表格后选中了表头：显示的是「选中的 / 全文的」（同 Typora）
+  await expect(window.getByTestId("word-count")).toHaveText(/^\d+ \/ \d+ 词$/);
 });
 
 test("S-10 用户词典：列出加入过的词，点 × 删掉", async () => {
@@ -86,7 +87,7 @@ test("S-10 用户词典：列出加入过的词，点 × 删掉", async () => {
   });
   await menu(app, "app.preferences");
   const dialog = window.locator(".marko-settings");
-  await dialog.getByRole("tab", { name: "语言与拼写" }).click();
+  await dialog.getByRole("tab", { name: "编辑器" }).click();
   const dictionary = dialog.getByTestId("settings-dictionary");
   await expect(dictionary.locator(".el-tag")).toHaveText(["markoish", "zzword"]);
   await dictionary.locator(".el-tag", { hasText: "zzword" }).locator(".el-tag__close").click();

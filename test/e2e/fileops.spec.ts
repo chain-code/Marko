@@ -63,7 +63,7 @@ test("W-6、F-13：新建 Markdown 文件、改名（打开着的跟着改路径
 
   // 工作区根目录上右键：新建 Markdown 文件，建好在这个窗口里打开
   await chooseFromNextMenu(app, "新建 Markdown 文件...");
-  await window.locator(".sidebar-root").click({ button: "right" });
+  await window.getByTestId("file-tree").locator(".file-tree-root").click({ button: "right" });
   await prompt.locator("input").fill("notes");
   await prompt.getByRole("button", { name: "确定" }).click();
   await expect.poll(() => title(app)).toBe("notes.md - Marko");

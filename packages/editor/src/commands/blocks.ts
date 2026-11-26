@@ -685,6 +685,29 @@ export function toggleTaskAtSelection(state: TextState): TextEditResult {
   };
 }
 
+/**
+ * 「段落 → 任务状态 → 标记为已完成、未完成」（B-5，同 Typora）：选区所在各行里的任务项，方括号里改成 `x` 或空格；
+ * 已经是这个状态的不动，不是任务项的行不动。一项都没改时返回 null
+ */
+export function setTaskStateAtSelection(state: TextState, done: boolean): TextEditResult | null {
+  const range = getLineRange(state.value, state.selectionStart, state.selectionEnd);
+  let changed = false;
+  const lines = range.value
+    .slice(range.lineStart, range.normalizedEnd)
+    .split("\n")
+    .map((line) => {
+      const { body, ending } = splitCarriageReturnEnding(line);
+      const task = body.match(/^((?:\s*>[ \t]?)*\s*(?:[-*+]|\d+[.)])\s+)\[([ xX])\](.*)$/);
+      if (!task || (task[2] !== " ") === done) return line;
+      changed = true;
+      return `${task[1]}[${done ? "x" : " "}]${task[3]}${ending}`;
+    });
+  if (!changed) return null;
+  // 只换了方括号里的一个字，长度不变，选区照旧
+  const value = `${range.value.slice(0, range.lineStart)}${lines.join("\n")}${range.value.slice(range.normalizedEnd)}`;
+  return { value, selectionStart: state.selectionStart, selectionEnd: state.selectionEnd };
+}
+
 function toggleTaskMarkerInLine(line: string): string | null {
   const { body, ending } = splitCarriageReturnEnding(line);
   const task = body.match(/^((?:\s*>[ \t]?)*\s*(?:[-*+]|\d+[.)])\s+)\[([ xX])\](.*)$/);

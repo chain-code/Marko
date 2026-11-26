@@ -76,7 +76,7 @@ test("S-12：改加粗的快捷键，菜单和编辑区跟着变；撞了先问�
   await window.keyboard.press("Control+KeyL");
   await expect(window.locator(".el-message--error")).toContainText("编辑器自己在用");
   await expect(dialog.locator('[data-shortcut="highlight"] input')).toHaveValue("");
-  await dialog.getByRole("button", { name: "完成" }).click();
+  await dialog.getByTestId("settings-close").click();
   await expect(dialog).toBeHidden();
 
   // 编辑区：Ctrl+Alt+B 加粗；Ctrl+B 不再加粗

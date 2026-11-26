@@ -34,6 +34,8 @@ export { COMMAND_KEYS, commandKey } from "./keyBindings.ts";
 export { linkAt, REFRESH_INLINE, withRootUrl } from "./plugins/inlineSyntax.ts";
 export { insertImageFiles, insertMedia, markdownUrl, mediaKindOf, type MediaInsert, type MediaKind } from "./plugins/placeholders.ts";
 export { centerSelection, jumpToAnchor, openLink } from "./plugins/viewModes.ts";
+// X-6「编辑 → 删除」
+export { deleteForward } from "./keymap.ts";
 // 代码块等 CodeMirror 按设置重新配置、重新量尺寸（容器变了大小、显示出来以后）
 export { refreshCodeViews } from "./nodeViews/index.ts";
 export { findStatus, findStatusOf, type FindOptions, type FindStatus } from "./reused/search.ts";

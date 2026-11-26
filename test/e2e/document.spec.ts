@@ -39,7 +39,7 @@ async function openWith(file: string): Promise<Page> {
   return window;
 }
 
-test("F-3、F-6、F-17：命令行带的文件在窗口里打开；编辑后标题带 ●，保存后写回、去掉 ●", async () => {
+test("F-3、F-6、F-17：命令行带的文件在窗口里打开；编辑后文件名后面带 •，保存后写回、去掉 •", async () => {
   const file = join(dir, "笔记.md");
   writeFileSync(file, "# 标题\n\n正文\n");
   const window = await openWith(file);
@@ -51,7 +51,7 @@ test("F-3、F-6、F-17：命令行带的文件在窗口里打开；编辑后标�
   await window.locator("#write p").click();
   await window.keyboard.press("End");
   await window.keyboard.type("XY");
-  await expect.poll(() => windowTitle(launched!)).toBe("● 笔记.md - Marko");
+  await expect.poll(() => windowTitle(launched!)).toBe("笔记.md• - Marko");
   await menu(launched!, "file.save");
   await expect.poll(() => readFileSync(file, "utf8")).toBe("# 标题\n\n正文XY\n");
   await expect.poll(() => windowTitle(launched!)).toBe("笔记.md - Marko");
@@ -73,7 +73,7 @@ test("F-6：文件被别的程序改过，保存时提示冲突；选「载入�
   expect(readFileSync(file, "utf8")).toBe("theirs\n");
 });
 
-test("F-10：有没保存的改动时关窗口先问；选「不保存」关掉，文件不变", async () => {
+test("F-10：有没保存的改动时关窗口先问（同 Typora 的确认框）；选「放弃更改」关掉，文件不变", async () => {
   const file = join(dir, "b.md");
   writeFileSync(file, "keep\n");
   const window = await openWith(file);
@@ -82,9 +82,9 @@ test("F-10：有没保存的改动时关窗口先问；选「不保存」关掉�
   const closed = launched!.app.waitForEvent("close");
   await launched!.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.close());
   const dialog = window.locator(".el-dialog");
-  await expect(dialog).toContainText("有没保存的改动");
-  await dialog.locator('[data-choice="discard"]').click();
-  await closed;
+  await expect(dialog).toContainText("是否保存更改");
+  // 点了以后窗口马上关掉，点击本身可能等不到返回（页面已关闭）：不看点击的结果，看窗口关没关
+  await Promise.all([closed, dialog.locator('[data-choice="discard"]').click().catch(() => undefined)]);
   expect(readFileSync(file, "utf8")).toBe("keep\n");
 });
 
@@ -108,7 +108,7 @@ test("F-10：退出时挨个窗口问；一个窗口选了取消，后面的不�
   const quit = () => app.evaluate(({ app: electronApp }) => electronApp.quit());
 
   await quit();
-  await expect(one.locator(".el-dialog")).toContainText("有没保存的改动");
+  await expect(one.locator(".el-dialog")).toContainText("是否保存更改");
   // 第二个窗口还没问
   await one.waitForTimeout(300);
   await expect(two.locator(".el-dialog")).toHaveCount(0);
@@ -121,10 +121,10 @@ test("F-10：退出时挨个窗口问；一个窗口选了取消，后面的不�
   // 再退出：第一个选不保存、关掉以后才问第二个，第二个也不保存——退出
   const exited = app.waitForEvent("close");
   await quit();
-  await one.locator('.el-dialog [data-choice="discard"]').click();
-  await expect(two.locator(".el-dialog")).toContainText("有没保存的改动");
-  await two.locator('.el-dialog [data-choice="discard"]').click();
-  await exited;
+  // 点了窗口就关（同上）：不看点击的结果，看后面
+  await one.locator('.el-dialog [data-choice="discard"]').click().catch(() => undefined);
+  await expect(two.locator(".el-dialog")).toContainText("是否保存更改");
+  await Promise.all([exited, two.locator('.el-dialog [data-choice="discard"]').click().catch(() => undefined)]);
   expect(readFileSync(first, "utf8")).toBe("one\n");
   expect(readFileSync(second, "utf8")).toBe("two\n");
 });

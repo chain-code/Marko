@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/parse.ts";
 import { lineColumn } from "../src/positions.ts";
-import { documentStats, markdownStats, textStats } from "../src/semantics/stats.ts";
+import { documentStats, markdownStats, sourceCounts, textStats, wordCount, wordCounts, wordCountText } from "../src/semantics/stats.ts";
 
 const stats = (source: string, readingSpeed?: number) => documentStats(parse(source), { readingSpeed });
 
@@ -133,5 +133,101 @@ describe("V-4 阅读时间、选区、光标位置", () => {
     expect(lineColumn("alpha\n中文", 7)).toEqual({ line: 2, column: 2 });
     expect(lineColumn("alpha\n中文", 99)).toEqual({ line: 2, column: 3 });
     expect(lineColumn("a\r\nb\rc", 5)).toEqual({ line: 3, column: 1 });
+  });
+});
+
+
+describe("V-4 同 Typora 的字数统计（按每块的原文数）", () => {
+  // Typora 1.14.17 打开这份文档：167 词、509 字符、61 行（状态栏、字数统计里的数）
+  const SAMPLE = [
+    "段落开头的第一段，文字 **粗体** *斜体* `code` <kbd>Ctrl</kbd> :smile: 和 [链接](https://example.com)。",
+    "",
+    "[TOC]",
+    "",
+    "# 标题一",
+    "",
+    "## 标题二",
+    "",
+    "### 标题三",
+    "",
+    "#### 标题四",
+    "",
+    "> [!NOTE]",
+    "> 提醒内容的正文",
+    "",
+    "> [!TIP]",
+    "> 建议内容",
+    "",
+    "> 外层引用",
+    ">",
+    "> > 内层引用",
+    "",
+    "1. 第一项",
+    "",
+    "   第一项的第二段",
+    "2. 第二项",
+    "   - 嵌套无序",
+    "   - 嵌套二",
+    "",
+    "- [ ] 任务一",
+    "- [x] 任务二",
+    "",
+    "```python",
+    "def f(x):",
+    "    return x + 1",
+    "```",
+    "",
+    "| 左 | 中 | 右 |",
+    "|:--|:-:|--:|",
+    "| 1 | 2 | 3 |",
+    "| 4 | 5 | 6 |",
+    "",
+    "***",
+    "",
+    "行内公式 $E=mc^2$ 在文字里。",
+    "",
+    "$$",
+    "\\int_0^1 x^2 dx = \\frac{1}{3}",
+    "$$",
+    "",
+    "<!-- 这是注释 -->",
+    "",
+    "<div>HTML 块</div>",
+    "",
+    "带脚注的文字[^note]，还有第二个[^2]。",
+    "",
+    "[^note]: 第一个脚注的内容",
+    "[^2]: 第二个脚注",
+    "",
+    "最后一段。",
+    "",
+  ].join("\n");
+
+  it("词数、字符数、行数同 Typora", () => {
+    expect(wordCounts(parse(SAMPLE), SAMPLE)).toEqual({ words: 167, chars: 509, lines: 61, minutes: 0 });
+  });
+
+  it("中日韩的字每个算一个词；英文按空白和标点切开，. - / 不切，撇号连着后面的字母；单独的标点不算", () => {
+    expect(wordCount("一级标题")).toBe(4);
+    expect(wordCount("e-mail a/b C# C++")).toBe(4);
+    expect(wordCount("it's example.com https://example.com")).toBe(4);
+    expect(wordCount("a , b ... c")).toBe(3);
+    expect(wordCount("   ")).toBe(0);
+  });
+
+  it("参与统计的文字：代码块带语言、目录、脚注定义的标签和 ↩、警告框的标记、emoji 两边的零宽空格", () => {
+    const source = ["[TOC]", "", "```js", "x", "```", "", "> [!NOTE]", "> body", "", "a :smile: b[^n]", "", "[^n]: note", ""].join("\n");
+    const expected = ["", "toc", "```js\nx```", "[!NOTE]\nbody", "a ​:smile:​ b[^n]", "n", "note", "↩"].join("\n");
+    expect(wordCountText(parse(source))).toBe(expected);
+  });
+
+  it("阅读时间四舍五入，不到半分钟是 0（显示成 ≤ 1）", () => {
+    const words = Array.from({ length: 573 }, () => "w").join(" ");
+    expect(wordCounts(parse(words), words, { readingSpeed: 382 }).minutes).toBe(2);
+    expect(wordCounts(parse("one"), "one").minutes).toBe(0);
+  });
+
+  it("字符数不算 BOM，CRLF 的换行算一个", () => {
+    expect(sourceCounts("﻿a\r\nb")).toEqual({ chars: 3, lines: 2 });
   });
 });

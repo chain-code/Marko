@@ -47,6 +47,7 @@ test("M-2、M-3、M-7：插入本地图片和视频复制到 ./assets；粘贴�
   const app = launched;
   const window = await app.app.firstWindow();
   await window.waitForSelector("#write p");
+  await window.evaluate(() => window.marko.settings.set({ imageInsertAction: "assets" }));
   await window.locator("#write p").click();
   await window.keyboard.press("End");
 

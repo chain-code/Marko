@@ -20,7 +20,7 @@ test.afterEach(async () => {
 
 async function menuLabels(app: LaunchedApp, top: string): Promise<string[]> {
   return app.app.evaluate(({ Menu }, label) => {
-    const menu = Menu.getApplicationMenu()?.items.find((item) => item.label === label);
+    const menu = Menu.getApplicationMenu()?.items.find((item) => item.label.replace(/\u200b/g, "") === label);
     return menu?.submenu?.items.map((item) => item.label) ?? [];
   }, top);
 }
@@ -65,7 +65,7 @@ test("A-1、A-3：内置主题；用户主题放进主题目录就出现在菜�
     join(themes, "night-ish.css"),
     '@import "night-ish/sub.css";\n@font-face { font-family: NightIsh; src: url("night-ish/font.woff2"); }\n#write { background: rgb(20, 20, 20); color: rgb(1, 2, 3); }\n',
   );
-  await expect.poll(() => menuLabels(app, "主题")).toContain("night-ish");
+  await expect.poll(() => menuLabels(app, process.platform === "darwin" ? "主题" : "主题(&T)")).toContain("night-ish");
   await clickMenuItem(app, "night-ish");
   await expect.poll(() => window.evaluate(() => getComputedStyle(document.querySelector("#write")!).color)).toBe("rgb(1, 2, 3)");
   // 底色是深的：按深色主题（Element Plus、编辑器跟着）

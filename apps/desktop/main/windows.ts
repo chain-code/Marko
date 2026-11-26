@@ -11,6 +11,7 @@ import { APP_HOST, APP_SCHEME } from "./protocol.ts";
 import { unwatchFile, watchFile } from "./watch.ts";
 import { trackZoom } from "./zoom.ts";
 import { installContextMenu } from "./contextMenu.ts";
+import { trackAccentColor } from "./accent.ts";
 import { t } from "./i18n.ts";
 
 const preloadPath = fileURLToPath(new URL("../preload/index.cjs", import.meta.url));
@@ -131,9 +132,9 @@ function keyOf(path: string): string {
   return process.platform === "linux" ? absolute : absolute.toLowerCase();
 }
 
-/** 窗口标题：「● 文件名 - Marko」（F-17） */
+/** 窗口标题：「文件名 - Marko」，改了没保存时文件名后面跟一个 •（F-17，同 Typora） */
 function applyTitle(window: BrowserWindow, state: DocumentState): void {
-  window.setTitle(`${state.edited ? "● " : ""}${state.title} - Marko`);
+  window.setTitle(`${state.title}${state.edited ? "•" : ""} - Marko`);
   if (process.platform === "darwin") {
     window.setDocumentEdited(state.edited);
     window.setRepresentedFilename(state.path ?? "");
@@ -201,6 +202,7 @@ export function createDocumentWindow(options: WindowOptions = {}): BrowserWindow
   scheduleSession();
   window.once("ready-to-show", () => window.show());
   trackZoom(window);
+  trackAccentColor(window);
   installContextMenu(window);
 
   // 一切新窗口都拦下；外部链接交给系统浏览器（N-4）

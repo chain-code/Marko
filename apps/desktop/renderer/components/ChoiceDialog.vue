@@ -4,6 +4,7 @@
     :title="current?.title ?? ''"
     width="420px"
     :close-on-click-modal="false"
+    :show-close="false"
     :append-to-body="true"
     align-center
     @close="settleWith(current?.cancelValue ?? '')"
@@ -11,15 +12,18 @@
   >
     <p class="choice-message">{{ current?.message }}</p>
     <template #footer>
-      <ElButton
-        v-for="choice in current?.choices ?? []"
-        :key="choice.value"
-        :type="choice.primary ? 'primary' : choice.danger ? 'danger' : 'default'"
-        :data-choice="choice.value"
-        @click="pick(choice.value)"
-      >
-        {{ choice.label }}
-      </ElButton>
+      <div class="choice-footer">
+        <ElButton
+          v-for="choice in current?.choices ?? []"
+          :key="choice.value"
+          :class="{ 'choice-left': choice.left }"
+          :type="choice.primary ? 'primary' : choice.danger ? 'danger' : 'default'"
+          :data-choice="choice.value"
+          @click="pick(choice.value)"
+        >
+          {{ choice.label }}
+        </ElButton>
+      </div>
     </template>
   </ElDialog>
 </template>
@@ -34,6 +38,8 @@ export interface Choice {
   value: string;
   primary?: boolean;
   danger?: boolean;
+  /** 放在左边（同 Typora 未保存确认的「保存」「放弃更改」），其余的靠右 */
+  left?: boolean;
 }
 
 interface Request {
@@ -86,5 +92,15 @@ defineExpose({ choose });
   margin: 0;
   line-height: 1.6;
   white-space: pre-wrap;
+}
+
+/* 标了 left 的按钮靠左，其余靠右（同 Typora 的三个按钮的确认框） */
+.choice-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.choice-footer .choice-left + :not(.choice-left) {
+  margin-left: auto;
 }
 </style>

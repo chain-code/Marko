@@ -266,8 +266,8 @@
 │   │   ├── useSettings.ts     设置的读取和订阅（S 章）
 │   │   └── useDialogs.ts      确认用 ChoiceDialog（ElDialog），提示用 ElMessage，状态栏的提示（F-10、F-12）
 │   └── components/            都用 Element Plus 的组件拼，不自己写基础控件
-│       ├── sidebar/           SideBar（ElTabs）；FileTree、FileList 用 ElTreeV2（虚拟滚动）；OutlineTree 用 ElTree；SearchPanel（W 章）
-│       ├── settings/          SettingsDialog（ElDialog + ElForm，按 settingsForm.ts 的设置项表画）、ShortcutsPanel（S 章、S-12）
+│       ├── sidebar/           SideBar（页签、底部工具栏照 Typora 画，底部的菜单用 ElDropdown）；FileTree 用 ElTreeV2（虚拟滚动）；FileList、SearchPanel 用 ElScrollbar；OutlineTree 用 ElTree（W 章）
+│       ├── settings/          SettingsDialog（照 Typora 盖住窗口的一页，原生的下拉框、勾选框，按 settingsForm.ts 的分节、分组表画）、ShortcutsPanel（S 章、S-12）
 │       ├── StatusBar.vue      （V-3、F-12）
 │       ├── FindBar.vue        ElInput、ElButton（N-1、N-2）
 │       ├── QuickOpen.vue      ElDialog + ElInput + 列表（F-4）
@@ -492,7 +492,7 @@
 - **CSP**（`protocol.ts` 给应用页面加的响应头）：`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' marko-theme:; img-src 'self' marko-asset: marko-theme: data: blob: https: http:; media-src marko-asset: blob: https: http:; font-src 'self' marko-theme: data:; connect-src 'self' marko-theme:; frame-src 'self' https:; object-src 'none'; base-uri 'none'`。上传、更新检查都由主进程发请求，渲染进程不需要联网；文档里的远程图片、嵌的网页（只许 https）和音视频照常加载（同 Typora，X-1）。
 - **图表沙箱页**（`sandbox.html`）单独一套 CSP：`default-src 'none'; script-src app://marko; style-src app://marko 'unsafe-inline'; img-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; sandbox allow-scripts`，不能联网、不能嵌页面；末尾的 `sandbox` 指令兜底，就算被当成顶层页面打开也没有任何权限。CSP 按解析出的文件定、不按请求里的写法（Windows、macOS 的文件名不分大小写，`Sandbox.html` 也是这个文件）：只有构建目录下的 `index.html` 用应用的 CSP，别的页面一律用这套。沙箱的源是不透明的（`null`），按模块加载脚本走 CORS：`app` 协议注册成 `corsEnabled`，只有 `assets/` 下的文件回 `Access-Control-Allow-Origin: null`（端到端测试里验证了三种图表都能画、沙箱碰不到父页面）。
 - **本地资源**：`marko-asset://` 只返回图片、视频、音频类型的文件，其他类型一律拒绝。
-- **接口**：涉及路径的调用都过 `scope.ts`。范围是用户主动打开过的：对话框选的、拖进来的、命令行和系统打开的文件，最近文件，工作区目录，以及这些文档所在目录下按 M-3 写入的资源目录。不在范围内返回 `out_of_scope`。主进程拿来用的路径都要在范围里，包括渲染进程报上来的文档状态（会话恢复、「打开所在文件夹」用它）；插入媒体时复制、上传的原文件另有一份只读的范围：对话框选的、拖进来和粘贴的（预加载脚本由 File 算出路径告诉主进程，页面交不了路径字符串）；导入图片的地址规范化以后要还在导入目录里；文档里的本地链接（N-4）是用户点的，不受范围限制，但只打开 Markdown 文件，别的文件主进程问过再交给系统。
+- **接口**：涉及路径的调用都过 `scope.ts`。范围是用户主动打开过的：对话框选的、拖进来的、命令行和系统打开的文件，最近文件，工作区目录（含 W-1 自动打开的、当前文件所在的文件夹：主进程按它记着的文档路径打开，渲染进程不给路径），以及这些文档所在目录下按 M-3 写入的资源目录。不在范围内返回 `out_of_scope`。主进程拿来用的路径都要在范围里，包括渲染进程报上来的文档状态（会话恢复、「打开所在文件夹」用它）；插入媒体时复制、上传的原文件另有一份只读的范围：对话框选的、拖进来和粘贴的（预加载脚本由 File 算出路径告诉主进程，页面交不了路径字符串）；导入图片的地址规范化以后要还在导入目录里；文档里的本地链接（N-4）是用户点的，不受范围限制，但只打开 Markdown 文件，别的文件主进程问过再交给系统。
 - **文档里的 HTML**：经 `render/sanitize.ts` 过滤后插入：去掉 `<script>`、事件属性、`javascript:` 地址、`<object>`、`<embed>`、表单；`<iframe>` 只保留 `https:` 地址，并加上 `sandbox` 属性，`allow` 里只留 `autoplay`、`encrypted-media`、`fullscreen`、`picture-in-picture`（去掉来源列表）；`<video>`、`<audio>`、`<details>`、`<img>`、`<kbd>` 等常用标签保留。
 - **生成的 SVG 怎么放进 HTML**：公式、图表、图标的 SVG 先用占位代替，过滤完用户的 HTML 以后再填回去。占位是私用区字符包着每次渲染随机生成的 nonce 和序号，文档里的文字冒充不了；用户的文字、属性值、原始 HTML、实体里出现的占位字符一律换成 U+FFFD（占位如果是固定写法，文档就能把公式的 SVG 拼进 iframe 的 `src`，挤掉 `sandbox` 属性）。不是解析器来的模型（ProseMirror JSON、插件）也拼不出坏 HTML：标题级别、表格对齐、起始序号、Callout 种类都先校验。
 - **图表**：在沙箱里渲染，返回的 SVG 再过滤一遍，过滤后必须是一个 `<svg>` 元素（前面有文字就算失败）；导出时不管调用方过滤没过滤，再过滤一遍。Mermaid 用 `securityLevel: "strict"`。
@@ -594,7 +594,7 @@ docs/            architecture.md（本文件）、features.md（功能清单）�
 | B-2 标题 | `semantics/outline.ts`（锚点 id） | `html.ts` | `nodes/index.ts`、`commands/blocks.ts`、`plugins/viewModes.ts`（跳到锚点） | — | — |
 | B-3 引用 | `model.ts`（每行前缀） | `html.ts` | `nodes/index.ts`、`commands/blocks.ts` | — | — |
 | B-4 列表 | `serialize.ts`（重新编号） | `html.ts` | `commands/lists.ts`、`commands/tab.ts`（缩进、反缩进） | — | — |
-| B-5 任务列表 | — | `html.ts` | `plugins/blockWidgets.ts`（复选框） | — | — |
+| B-5 任务列表 | — | `html.ts` | `plugins/blockWidgets.ts`（复选框） | — | `accent.ts`（系统的强调色） |
 | B-6 代码块 | — | `highlight.ts` | `nodeViews/codeBlock.ts`、`nodeViews/codeMirror.ts`、`commands/raw.ts` | `overlays/CodeLanguage.vue`（选语言） | `contextMenu.ts` |
 | B-7 公式块 | `syntax/math.ts` | `math.ts` | `nodeViews/rawBlocks.ts`、`commands/raw.ts` | — | — |
 | B-8 分隔线 | — | `html.ts` | `nodes/index.ts`、`commands/backspace.ts` | — | — |
@@ -680,19 +680,19 @@ docs/            architecture.md（本文件）、features.md（功能清单）�
 |---|---|---|---|---|
 | W-1 工作区 | — | — | `useWorkspace` | `workspace.ts`、`scope.ts` |
 | W-2 文件树 | — | — | `sidebar/FileTree`（ElTreeV2） | `workspace.ts`、`watch.ts` |
-| W-3 文件列表 | — | — | `sidebar/FileList`（ElTreeV2） | `workspace.ts`、`watch.ts` |
+| W-3 文件列表 | — | — | `sidebar/FileList`（ElScrollbar） | `workspace.ts`、`watch.ts` |
 | W-4 大纲 | `semantics/outline.ts` | `index.ts`（大纲变化事件） | `sidebar/OutlineTree`（ElTree） | — |
-| W-5 全局搜索 | — | — | `sidebar/SearchPanel`（ElInput + ElTreeV2） | `search.ts`（ripgrep） |
+| W-5 全局搜索 | — | — | `sidebar/SearchPanel`（ElScrollbar；文件那一行和匹配的行高度不同，同 Typora，ElTreeV2 只能固定行高；最多 2000 处，不用虚拟滚动） | `search.ts`（ripgrep） |
 | W-6 右键菜单 | — | — | `useWorkspace` | `contextMenu.ts`（electron-context-menu）、`workspace.ts` |
-| W-7 侧栏 | — | — | `App.vue`（ElSplitter）、`useSettings` | `store.ts`（宽度、页签） |
+| W-7 侧栏 | — | — | `App.vue`（ElSplitter）、`sidebar/SideBar`（ElDropdown）、`useSettings` | `store.ts`（宽度、页签） |
 | N-1 查找 | `positions.ts` | `reused/search.ts`（prosemirror-search）；源码模式用 `@codemirror/search` | `FindBar.vue` | `menu.ts` |
 | N-2 替换 | — | `reused/search.ts` | `FindBar.vue` | — |
 | N-3 跳转 | — | `plugins/viewModes.ts` | — | `menu.ts` |
 | N-4 链接跳转 | `semantics/outline.ts`（锚点） | `plugins/inlineSyntax.ts`（Ctrl+单击）、`plugins/viewModes.ts`（打开链接、跳到锚点） | `host.ts`、`useDocument.ts` | `ipc.ts`（`file.openLink`）、`links.ts`、`windows.ts` |
 | V-1 专注模式 | — | `plugins/focus.ts`（md-focus）、`plugins/viewModes.ts` | — | `menu.ts` |
 | V-2 打字机模式 | — | `plugins/viewModes.ts` | — | `menu.ts` |
-| V-3 状态栏 | — | — | `StatusBar.vue` | — |
-| V-4 字数统计 | `semantics/stats.ts` | `index.ts`（选区变化事件） | `WordCountDialog.vue`（ElDescriptions）、`selectionStats.ts` | — |
+| V-3 状态栏 | — | — | `StatusBar.vue`（侧边栏、源代码模式按钮，字数） | — |
+| V-4 字数统计 | `semantics/stats.ts`（同 Typora 的算法：`wordCount`、`wordCountText`） | `index.ts`（选区变化事件） | `WordCountPopover.vue`（状态栏上方的弹窗）、`wordCounts.ts`（选区、状态栏的文字） | — |
 | V-5 缩放 | — | — | — | `zoom.ts`、`menu.ts` |
 | V-6 全屏 | — | — | — | `menu.ts`（togglefullscreen） |
 | V-7 窗口置顶 | — | — | — | `windows.ts`、`menu.ts` |
@@ -722,7 +722,7 @@ docs/            architecture.md（本文件）、features.md（功能清单）�
 | A-2 字体与宽度 | `themes/base.css` 的变量；`renderer/appearance.ts`（editorSettingsOf） |
 | A-3 自定义主题 | `main/themes.ts`（列表、监听主题目录、导出用的 CSS）、`main/protocol.ts`（marko-theme://）；`renderer/appearance.ts` |
 | A-4 跟随系统深浅色 | `renderer/appearance.ts`（`activeTheme`）、`App.vue`（`matchMedia` 监听 `prefers-color-scheme`，由系统、主进程的 `nativeTheme` 决定）；切换 `html.dark` |
-| S-1 偏好设置 | `renderer/components/settings/`（Element Plus 表单组件）、`useSettings`；`main/store.ts`（electron-store，保存、广播） |
+| S-1 偏好设置 | `renderer/components/settings/`（同 Typora 用原生控件；多选、可输入的下拉框、词典用 Element Plus）、`useSettings`；`main/store.ts`（electron-store，保存、广播） |
 | S-2～S-13 | 各节对应 `renderer/components/settings/` 里的一个组件，值存在 `main/store.ts`；每项影响的功能见表里括号中的编号 |
 | L-1 拼写检查 | `main/index.ts`（开关、语言）、`main/contextMenu.ts`（electron-context-menu 的拼写建议）；`editor/nodeViews/*`（代码、公式块里关掉检查）、`editor/plugins/inlineSyntax.ts`（标记、行内代码、网址、公式源码不检查） |
 | L-2 界面语言 | `renderer/locales/`、vue-i18n、Element Plus 的语言包；`main/menu.ts`（菜单文字）；`editor/host.ts`（编辑器的文字） |
@@ -737,3 +737,4 @@ docs/            architecture.md（本文件）、features.md（功能清单）�
 | X-3 性能 | `markdown/reconcile.ts`、增量解析；`render` 的缓存；`editor/plugins/lazy.ts`、`plugins/inlineSyntax.ts`；`renderer/useDocument.ts`（草稿、自动保存防抖）、`StatusBar.vue`（字数防抖） |
 | X-4 运行平台 | electron-builder 配置 |
 | X-5 数据与隐私 | `main/store.ts`；网络请求只在 `main/upload.ts`、`main/updater.ts`，拼写词典由 Electron 下载（`main/index.ts` 设语言）；渲染进程只加载文档里的远程图片、网页、音视频 |
+| X-6 菜单栏 | `main/menu.ts`（菜单的结构，同 Typora）、`shared/shortcuts.ts`（快捷键）、`locales/*.json`（文字）；`renderer/App.vue`（菜单命令分给编辑器和应用） |

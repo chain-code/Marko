@@ -2,13 +2,24 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS, SettingsPatchSchema, applySettingsPatch, normalizeSettings } from "../src/index.ts";
 
 describe("设置（S 章、1.8 节）", () => {
-  it("默认值同第 2 章的表", () => {
+  it("默认值同第 2 章的表（同 Typora 1.14.17 的默认值）", () => {
     expect(DEFAULT_SETTINGS.theme).toBe("solo");
     expect(DEFAULT_SETTINGS.autoSaveIntervalMinutes).toBe(3);
-    expect(DEFAULT_SETTINGS.startup).toBe("restore");
+    expect(DEFAULT_SETTINGS.startup).toBe("blank");
+    expect(DEFAULT_SETTINGS.autoSave).toBe(false);
+    expect(DEFAULT_SETTINGS.saveOnFileSwitch).toBe(false);
+    expect(DEFAULT_SETTINGS.collapsibleOutline).toBe(false);
+    expect(DEFAULT_SETTINGS.copyMarkdownAsPlainText).toBe(true);
+    expect(DEFAULT_SETTINGS.smartQuotes).toBe(false);
+    expect(DEFAULT_SETTINGS.smartDashes).toBe(false);
+    expect(DEFAULT_SETTINGS.preserveSingleLineBreaks).toBe(true);
+    expect(DEFAULT_SETTINGS.codeWrap).toBe(true);
+    expect(DEFAULT_SETTINGS.readingSpeed).toBe(382);
     expect(DEFAULT_SETTINGS.extensions.highlight).toBe(false);
     expect(DEFAULT_SETTINGS.extensions.math).toBe(true);
-    expect(DEFAULT_SETTINGS.imageInsertAction).toBe("assets");
+    expect(DEFAULT_SETTINGS.extensions.inlineMath).toBe(false);
+    expect(DEFAULT_SETTINGS.imageInsertAction).toBe("none");
+    expect(DEFAULT_SETTINGS.escapeImageUrls).toBe(false);
     expect(DEFAULT_SETTINGS.spellcheckLanguages).toEqual(["en-US"]);
   });
 

@@ -46,6 +46,19 @@ export {
 } from "./semantics/references.ts";
 export { collectAbbreviations, findAbbreviations, type AbbreviationInfo, type AbbreviationMatch } from "./semantics/abbreviations.ts";
 export { readFrontMatter, type FrontMatterInfo } from "./semantics/frontMatter.ts";
-export { documentStats, markdownStats, textStats, visibleText, type DocumentStats, type StatsOptions, type TextStats } from "./semantics/stats.ts";
+export {
+  documentStats,
+  markdownStats,
+  sourceCounts,
+  textStats,
+  visibleText,
+  wordCount,
+  wordCounts,
+  wordCountText,
+  type DocumentStats,
+  type StatsOptions,
+  type TextStats,
+  type WordCounts,
+} from "./semantics/stats.ts";
 export { normalizeLabel } from "./semantics/labels.ts";
 export { plainText, type PlainTextOptions } from "./semantics/text.ts";

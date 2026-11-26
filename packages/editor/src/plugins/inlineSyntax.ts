@@ -408,11 +408,11 @@ function smartPunctuation(text: string, fragments: Fragment[], context: InlineCo
 }
 
 /**
- * 脚注引用的上标（B-11）：单击跳到定义（所在的编辑器：Tiptap 把它挂在编辑区根元素的 editor 上）；
+ * 脚注引用的上标（B-11）：编辑区里显示标签（同 Typora 的编辑区；导出时是序号）；单击跳到定义（所在的编辑器：Tiptap 把它挂在编辑区根元素的 editor 上）；
  * 定义的内容放在 data-tip（鼠标移上去时组件用提示框显示）
  */
-function footnoteElement(number: number, key: string, tip: string): HTMLElement {
-  const element = textElement("sup", "md-footnote", String(number));
+function footnoteElement(label: string, key: string, tip: string): HTMLElement {
+  const element = textElement("sup", "md-footnote", label);
   if (tip) element.dataset.tip = tip;
   element.addEventListener("mousedown", (event) => {
     const root = (event.currentTarget as HTMLElement).closest(".ProseMirror") as (HTMLElement & { editor?: { view: EditorView } }) | null;
@@ -540,7 +540,7 @@ function blockDecorations(node: PMNode, pos: number, focus: number[], context: I
         // 没有定义的按普通文字显示（B-11）
         // B-11：单击上标跳到脚注定义
         const key = normalizeLabel(label);
-        if (info) atom(fragment, `footnote\u0000${info.number}\u0000${info.text}`, () => footnoteElement(info.number, key, info.text), false);
+        if (info) atom(fragment, `footnote\u0000${label}\u0000${info.text}`, () => footnoteElement(label, key, info.text), false);
         break;
       }
       case "emoji": {

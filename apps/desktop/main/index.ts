@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, Menu, session } from "electron";
 import { EVENTS, type Settings } from "@marko/shared";
 import { openPath, registerIpc } from "./ipc.ts";
-import { rebuildMenu } from "./menu.ts";
+import { editorContextItems, rebuildMenu } from "./menu.ts";
+import { setEditorContextItems } from "./contextMenu.ts";
+import { watchAccentColor } from "./accent.ts";
 import { setLocale } from "./i18n.ts";
 import { cleanupImports } from "./imports.ts";
 import { installPermissionHandlers } from "./permissions.ts";
@@ -115,7 +117,10 @@ if (!app.requestSingleInstanceLock()) {
     // L-2：界面语言跟着设置（菜单、对话框、错误提示）；换了以后重建菜单
     setLocale(getSettings().language);
     rebuildMenu();
+    setEditorContextItems(editorContextItems);
     onRecentChanged(rebuildMenu);
+    // B-5：任务的复选框跟着系统的强调色（同 Typora）
+    watchAccentColor();
     // L-1：拼写检查开关、语言跟着设置；菜单里的勾跟着设置
     applySpellcheck(getSettings());
     onSettingsChanged((settings) => {

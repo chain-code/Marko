@@ -1,14 +1,18 @@
 // 右键菜单（L-1、W-6、通用规则 6）：
-// - 编辑区、输入框：electron-context-menu 现成的原生菜单——拼写建议、加入词典、剪切复制粘贴；编辑区再加「粘贴为纯文本」「全选」
-//   （交给编辑器：编辑器的全选、纯文本粘贴有自己的规则，E-7、C-4）。不要「用 Google 搜索」「查询」这些外部服务；
+// - 编辑区：拼写建议、加入词典（electron-context-menu 现成的），下面是同 Typora 的那些项（menu.ts 的 editorContextItems，
+//   交给编辑器的命令：编辑器的纯文本粘贴、删除有自己的规则，E-7、C-4）；右键在链接、图片上再加复制链接地址、复制图片；
+// - 输入框：拼写建议、剪切复制粘贴、全选。不要「用 Google 搜索」「查询」这些外部服务；
 // - 侧栏（文件树、文件列表、最近文件）：渲染进程阻止默认的右键菜单，给出菜单项让主进程弹（popupMenu），选了哪项交回去
-import { BrowserWindow, clipboard, Menu, type MenuItemConstructorOptions } from "electron";
+import { BrowserWindow, Menu, type MenuItemConstructorOptions } from "electron";
 import contextMenu from "electron-context-menu";
-import { EVENTS, type PopupItem } from "@marko/shared";
+import type { PopupItem } from "@marko/shared";
 import { t } from "./i18n.ts";
 
-function send(window: BrowserWindow, id: string, argument?: string): void {
-  if (!window.isDestroyed()) window.webContents.send(EVENTS.menuCommand, argument === undefined ? { id } : { id, argument });
+/** 编辑区右键菜单的项：index.ts 交过来 menu.ts 的 editorContextItems（菜单栏那套命令和快捷键；在这里直接引 menu.ts 会绕成一圈） */
+let editorContextItems: () => MenuItemConstructorOptions[] = () => [];
+
+export function setEditorContextItems(build: () => MenuItemConstructorOptions[]): void {
+  editorContextItems = build;
 }
 
 export function installContextMenu(window: BrowserWindow): void {
@@ -51,15 +55,16 @@ export function installContextMenu(window: BrowserWindow): void {
     },
     // 能编辑的地方、选了文字的地方才弹（侧栏的由渲染进程自己弹）
     shouldShowMenu: (_event, params) => params.isEditable || params.selectionText.trim().length > 0,
-    append: (_defaults, params) => {
-      if (!params.isEditable) return [];
-      // 编辑区是 contenteditable（formControlType 是 none）；输入框用浏览器自己的全选
-      if (params.formControlType !== "none") return [{ role: "selectAll", label: t("menu.edit.selectAll") }];
-      return [
-        { label: t("menu.edit.pastePlainText"), click: async () => send(window, "editor.pastePlainText", await clipboard.readText()) },
-        { type: "separator" },
-        { label: t("menu.edit.selectAll"), click: () => send(window, "editor.selectAll") },
-      ];
+    menu: (actions, params, _window, suggestions) => {
+      const spelling: MenuItemConstructorOptions[] = params.misspelledWord ? [...suggestions, actions.separator(), actions.learnSpelling({}), actions.separator()] : [];
+      // 编辑区是 contenteditable（formControlType 是 none）
+      if (params.isEditable && params.formControlType === "none") {
+        const extra = [params.linkURL ? actions.copyLink({}) : null, params.mediaType === "image" ? actions.copyImage({}) : null].filter((entry) => entry !== null);
+        return [...spelling, ...editorContextItems(), ...(extra.length ? [actions.separator(), ...extra] : [])];
+      }
+      // 输入框：浏览器自己的剪切复制粘贴、全选
+      if (params.isEditable) return [...spelling, actions.cut({}), actions.copy({}), actions.paste({}), actions.separator(), { role: "selectAll", label: t("menu.edit.selectAll") }];
+      return [actions.copy({})];
     },
   });
 }

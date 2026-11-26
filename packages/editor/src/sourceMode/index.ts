@@ -19,8 +19,17 @@ import {
   SearchQuery as CodeSearchQuery,
   setSearchQuery,
 } from "@codemirror/search";
-import { EditorSelection, EditorState as CodeState } from "@codemirror/state";
-import { drawSelection, EditorView as CodeView, keymap } from "@codemirror/view";
+import { EditorSelection, EditorState as CodeState, RangeSetBuilder } from "@codemirror/state";
+import {
+  drawSelection,
+  EditorView as CodeView,
+  GutterMarker,
+  gutterLineClass,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  keymap,
+  lineNumbers,
+} from "@codemirror/view";
 import { codeHighlighter } from "@marko/render";
 import type { Editor } from "@tiptap/core";
 import { TextSelection, type Transaction } from "@tiptap/pm/state";
@@ -31,6 +40,27 @@ import { nearestMatch, type FindOptions, type FindStatus } from "../reused/findT
 import { commandKey } from "../keyBindings.ts";
 
 const controllers = new WeakMap<Editor, SourceModeView>();
+
+/** 显示行号的行（同 Typora）：第 1 行、每 10 行、最后一行；光标所在行的行号由 cm-activeLineGutter 显示。别的行的行号是透明的 */
+class ShownLineNumber extends GutterMarker {
+  override elementClass = "md-line-number-shown";
+}
+
+const SHOWN_LINE_NUMBER = new ShownLineNumber();
+
+const shownLineNumbers = gutterLineClass.compute(["doc"], (state) => {
+  const builder = new RangeSetBuilder<GutterMarker>();
+  const last = state.doc.lines;
+  for (let number = 1; number <= last; number = number === 1 ? 10 : number + 10) {
+    const { from } = state.doc.line(number);
+    builder.add(from, from, SHOWN_LINE_NUMBER);
+  }
+  if (last !== 1 && last % 10 !== 0) {
+    const { from } = state.doc.line(last);
+    builder.add(from, from, SHOWN_LINE_NUMBER);
+  }
+  return builder.finish();
+});
 
 /** 正在用的源码模式（没打开时为 undefined） */
 export function sourceModeOf(editor: Editor): SourceModeView | undefined {
@@ -78,6 +108,11 @@ export class SourceModeView {
           ]),
           markdown({ codeLanguages: languages }),
           syntaxHighlighting(codeHighlighter),
+          // 同 Typora：左边的行号（只显示几行，见 shownLineNumbers）、光标所在行浅灰底（样式在 themes/editor.css）
+          lineNumbers(),
+          shownLineNumbers,
+          highlightActiveLine(),
+          highlightActiveLineGutter(),
           drawSelection(),
           search({ top: true }),
           CodeView.lineWrapping,

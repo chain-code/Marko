@@ -44,6 +44,8 @@ test("W-1：打开所在文件夹为工作区、关闭工作区；新窗口沿�
   await expect.poll(() => app.app.windows().length).toBe(2);
   const other = app.app.windows().find((page) => page !== window)!;
   await other.waitForSelector("#write");
+  // 新窗口的页签按「默认侧栏」（默认大纲，同 Typora）：切到文件页签看
+  await other.locator('.sidebar-tab[data-tab="files"]').click();
   await expect(items(other)).toHaveText(["a.md", "b.md"]);
 
   // 有两个窗口了：发给原来那个
@@ -51,7 +53,7 @@ test("W-1：打开所在文件夹为工作区、关闭工作区；新窗口沿�
     const first = BrowserWindow.getAllWindows().find((item) => item.getTitle().startsWith("a.md"));
     first?.webContents.send("marko:menu.command", { id: "workspace.close" });
   });
-  await expect(window.getByTestId("sidebar")).toContainText("还没有打开文件夹");
+  await expect(window.getByTestId("sidebar")).toContainText("没有打开的文件夹");
   await expect(items(other)).toHaveText(["a.md", "b.md"]);
 });
 
@@ -114,13 +116,16 @@ test("W-5：一个文件匹配超过 200 行时标出只列了前面的", async 
   const input = window.getByTestId("search-input");
   await input.fill("needle");
   await input.press("Enter");
-  const counts = window.getByTestId("search-panel").locator(".search-file-count");
-  await expect(counts).toHaveCount(2);
-  await expect(window.getByTestId("search-panel").locator(".search-file", { hasText: "many.md" }).locator(".search-file-count")).toHaveText("200+");
-  await expect(window.getByTestId("search-panel").locator(".search-file", { hasText: "few.md" }).locator(".search-file-count")).toHaveText("1");
+  // 结果列表是虚拟滚动的，只画看得见的行；文件的先后是 ripgrep 搜完的先后。many.md 在前面时，它展开的 200 行
+  // 把 few.md 挤到看不见的地方：两个文件都搜到了按状态里的汇总看，收起 many.md 以后再看 few.md 那一行
+  await expect(window.getByTestId("search-status")).toHaveText("2 个文件中找到 201 处");
+  const file = (name: string) => window.getByTestId("search-panel").locator(".search-file", { hasText: name });
+  await expect(file("many.md").locator(".search-file-count")).toHaveText("200+");
+  await file("many.md").click();
+  await expect(file("few.md").locator(".search-file-count")).toHaveText("1");
 });
 
-test("S-4：新窗口的侧栏按「默认侧栏」；V-3、V-4：选区字数不算标记，点字数打开字数统计", async () => {
+test("S-4：新窗口的侧栏按「默认侧栏」；V-3、V-4：有选区时状态栏是「选中的 / 全文的」，点字数打开字数统计", async () => {
   const file = join(dir, "doc.md");
   writeFileSync(file, "word **bold** [docs](https://example.com/a/b)\n");
   launched = await launchApp([file]);
@@ -133,14 +138,50 @@ test("S-4：新窗口的侧栏按「默认侧栏」；V-3、V-4：选区字数�
   await expect.poll(() => app.app.windows().length).toBe(2);
   const other = app.app.windows().find((page) => page !== window)!;
   await other.waitForSelector("#write");
-  await expect(other.getByTestId("sidebar").locator(".el-tabs__item.is-active")).toHaveText("大纲");
+  await expect(other.getByTestId("sidebar").locator(".sidebar-tab.is-active")).toHaveText("大纲");
 
-  // 全选：word、bold、docs 三个词（** 和网址不算）
+  // 同 Typora 按原文数：word、bold、docs、https、//example.com/a/b 五个词（. 和 / 不切开）
+  await expect(window.getByTestId("word-count")).toHaveText("5 词");
+  // 全选：选中的就是全文，只显示全文的
   await window.locator("#write p").click();
   await window.keyboard.press("Control+KeyA");
-  await expect(window.getByTestId("word-count")).toHaveText("已选 3 词");
+  await expect(window.getByTestId("word-count")).toHaveText("5 词");
+  // 选中一个词：「选中的 / 全文的」
+  await window.locator("#write p").dblclick({ position: { x: 8, y: 8 } });
+  await expect(window.getByTestId("word-count")).toHaveText("1 / 5 词");
   await window.getByTestId("word-count").click();
-  const dialog = window.locator(".marko-word-count");
-  await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText("3 词");
+  const panel = window.getByTestId("word-count-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText("总计");
+  await expect(panel).toContainText("选中部分");
+});
+
+test("W-1：没有主动打开文件夹时侧栏显示当前文件所在的文件夹；打开子文件夹里的文件不换，另存到别处跟着换", async () => {
+  mkdirSync(join(dir, "notes", "sub"), { recursive: true });
+  mkdirSync(join(dir, "other"));
+  writeFileSync(join(dir, "notes", "a.md"), "# A\n");
+  writeFileSync(join(dir, "notes", "sub", "b.md"), "# B\n");
+  launched = await launchApp([join(dir, "notes", "a.md")]);
+  const app = launched;
+  const window = await app.app.firstWindow();
+  await window.waitForSelector("#write h1");
+  await menu(app, "view.fileTree");
+  const tree = window.getByTestId("file-tree");
+  await expect(tree.locator(".file-tree-root")).toHaveText("notes");
+  await expect(items(window)).toHaveText(["sub", "a.md"]);
+
+  // 子文件夹里的文件：侧栏的根不换
+  await items(window).filter({ hasText: "sub" }).click();
+  await items(window).filter({ hasText: "b.md" }).click();
+  await expect(window.locator("#write h1")).toHaveText("B");
+  await expect(tree.locator(".file-tree-root")).toHaveText("notes");
+
+  // 另存到别的文件夹：跟着换成那个文件夹
+  await app.app.evaluate(({ dialog }, path) => {
+    dialog.showSaveDialog = (async () => ({ canceled: false, filePath: path })) as typeof dialog.showSaveDialog;
+  }, join(dir, "other", "c.md"));
+  await menu(app, "file.saveAs");
+  await expect.poll(() => title(app)).toBe("c.md - Marko");
+  await expect(tree.locator(".file-tree-root")).toHaveText("other");
+  await expect(items(window)).toHaveText(["c.md"]);
 });

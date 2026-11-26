@@ -43,6 +43,8 @@ export function coreSyntax(settings: EditorSettings): SyntaxOptions {
     flowchart: extensions.flowchart,
     sequence: extensions.sequence,
     math: extensions.math,
+    // 行内公式：桌面应用另外给（S-8，同 Typora 默认关）；编辑器库的设置里没有这一项，跟着 math
+    inlineMath: (extensions as { inlineMath?: boolean }).inlineMath ?? true,
     footnotes: extensions.footnote,
     callout: extensions.alerts,
     emoji: extensions.emoji,

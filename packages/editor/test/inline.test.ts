@@ -187,7 +187,8 @@ describe("原子片段", () => {
     open("a :smile: &amp; b[^n] c<br>d\n\n[^n]: note\n\nend", 60);
     expect(editor.view.dom.querySelector("p .md-emoji")?.textContent).toBe("😄");
     expect(editor.view.dom.querySelector("p .md-entity")?.textContent).toBe("&");
-    expect(editor.view.dom.querySelector("p sup.md-footnote")?.textContent).toBe("1");
+    // 编辑区里显示标签（同 Typora 的编辑区；导出时是序号，B-11）
+    expect(editor.view.dom.querySelector("p sup.md-footnote")?.textContent).toBe("n");
     // 鼠标移上去显示的定义内容（B-11）
     expect(editor.view.dom.querySelector<HTMLElement>("p sup.md-footnote")?.dataset.tip).toBe("note");
     expect(editor.view.dom.querySelector("p br")).not.toBeNull();

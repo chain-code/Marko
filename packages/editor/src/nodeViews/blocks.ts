@@ -53,7 +53,8 @@ export class FootnoteDefinitionView implements NodeView {
   constructor(private readonly props: BlockViewProps) {
     this.node = props.node;
     this.dom = document.createElement("div");
-    this.dom.className = "md-def-footnote";
+    // 类名同 Typora 的编辑区（footnotes md-def-footnote），Typora 的主题给脚注写的样式照样生效
+    this.dom.className = "footnotes md-def-footnote";
     this.name = widget("span", "md-def-name");
     this.contentDOM = document.createElement("div");
     this.contentDOM.className = "md-def-content";
@@ -74,9 +75,10 @@ export class FootnoteDefinitionView implements NodeView {
     return String(this.node.attrs.label ?? "");
   }
 
+  /** 名字只放标签，前后的「[^」「] :」是样式画的（同 Typora，editor.css） */
   private renderName(): void {
     this.dom.setAttribute("data-label", this.label());
-    this.name.textContent = `[^${this.label()}]:`;
+    this.name.textContent = this.label();
   }
 
   private renderBacklinks(): void {

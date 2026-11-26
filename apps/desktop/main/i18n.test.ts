@@ -45,7 +45,7 @@ describe("L-2 界面文字", () => {
   it("参数换进去；消息写法里的特殊字符原样显示", () => {
     expect(t("app.version", { version: "2.0.0" })).toBe("版本 2.0.0");
     expect(t("files.invalidName")).toBe('名字里不能有 < > : " / \\ | ? *');
-    expect(t("settings.option.imageInsertAction.documentAssets")).toBe("复制到 ./${filename}.assets");
+    expect(t("settings.option.imageInsertAction.documentAssets")).toBe("复制图片到 ./${filename}.assets 文件夹");
     expect(t("confirm.recentMissing.message", { message: "文件不存在", path: "C:\\a.md" })).toBe("文件不存在：\nC:\\a.md\n\n要从最近文件里去掉它吗？");
   });
 });
@@ -56,8 +56,8 @@ describe("L-2 English", () => {
     expect(t("common.dontSave")).toBe("Don't Save");
     expect(t("files.invalidName")).toBe(String.raw`Names can't contain < > : " / \ | ? *`);
     expect(t("document.deletedTitle", { title: "a.md" })).toBe("a.md (deleted)");
-    expect(t("settings.option.imageInsertAction.documentAssets")).toBe("Copy to ./${filename}.assets");
-    expect(t("menu.file.reveal", { manager: "Finder" })).toBe("Reveal in Finder");
+    expect(t("settings.option.imageInsertAction.documentAssets")).toBe("Copy image to ./${filename}.assets folder");
+    expect(t("files.revealIn", { manager: "Finder" })).toBe("Reveal in Finder");
     expect(availableLocales().map((locale) => locale.code)).toEqual(["zh-CN", "en"]);
     setLocale("zh-CN");
     expect(t("document.deletedTitle", { title: "a.md" })).toBe("a.md（已删除）");

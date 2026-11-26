@@ -168,6 +168,11 @@ function stepCaret(editor: Editor, direction: -1 | 1, extend: boolean): boolean 
   return true;
 }
 
+/** 「编辑 → 删除」（X-6）：同按 Delete 键（有选区时删掉选中的内容）。自己派发事务，不放进 Tiptap 的命令 */
+export function deleteForward(editor: Editor): boolean {
+  return deleteKey(editor, "forward");
+}
+
 export const markdownKeymap = Extension.create({
   name: "markoKeymap",
   addKeyboardShortcuts() {

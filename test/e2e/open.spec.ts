@@ -56,11 +56,14 @@ test("F-4 快速打开：工作区里模糊找；回车按 F-3 的规则打开�
   await expect(window.locator("#write h1")).toHaveText("日记");
   expect(await windowCount(launched)).toBe(1);
 
-  // 这个窗口已经有文档了：新开窗口
+  // 这个窗口已经有文档了：新开窗口。同上面一样等输入框拿到焦点再打字、等选中的是 todo.md 再回车
+  // （上一次关的时候对话框的内容有关闭动画，完了才销毁：打得太早的字会丢，回车就打开了列表第一个、已经开着的文件）
   await menu(launched, "file.quickOpen");
+  await expect(input).toBeFocused();
   await input.pressSequentially("todo");
   await input.press("ArrowDown");
   await input.press("ArrowUp");
+  await expect(list.locator(".quick-open-item.active")).toContainText("todo.md");
   await input.press("Enter");
   await expect.poll(() => windowCount(launched!)).toBe(2);
   await expect(window.locator("#write h1")).toHaveText("日记");

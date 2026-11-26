@@ -26,7 +26,7 @@ async function windowTitles(app: LaunchedApp): Promise<string[]> {
   return app.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((window) => window.getTitle()).sort());
 }
 
-test("F-16：退出后再启动，恢复文档、工作区和侧栏页签；关掉最后一个窗口也算", async () => {
+test("F-16：「启动时」选了恢复上次的窗口：退出后再启动，恢复文档、工作区和侧栏页签；关掉最后一个窗口也算", async () => {
   mkdirSync(join(dir, "notes"));
   const file = join(dir, "notes", "a.md");
   writeFileSync(file, "# A\n\ntext\n");
@@ -35,6 +35,8 @@ test("F-16：退出后再启动，恢复文档、工作区和侧栏页签；关�
   const userData = launched.userData;
   let window = await launched.app.firstWindow();
   await window.waitForSelector("#write h1");
+  // 「启动时」默认新建空白文档（同 Typora，S-3）
+  await window.evaluate(() => window.marko.settings.set({ startup: "restore" }));
   await launched.app.evaluate(({ dialog }, folder) => {
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [folder] })) as typeof dialog.showOpenDialog;
   }, join(dir, "notes"));

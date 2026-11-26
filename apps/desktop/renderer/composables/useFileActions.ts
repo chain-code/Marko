@@ -174,18 +174,19 @@ export function useFileActions(api: MarkoApi, options: FileActionOptions) {
     }
   }
 
-  /** 「文件 → 文件操作」（F-13）：对当前文档 */
-  async function currentFileAction(action: "rename" | "copyPath" | "reveal" | "openFolder"): Promise<void> {
+  /** 「文件 → 文件操作」（F-13）、「文件 → 打开文件位置…」「删除…」（X-6）：对当前文档 */
+  async function currentFileAction(action: "rename" | "copyPath" | "reveal" | "openFolder" | "trash"): Promise<void> {
     const path = options.documentPath();
     if (!path) {
       options.info(t("files.notSaved"));
       return;
     }
     if (action === "rename") return rename(path);
+    if (action === "trash") return trash(path);
     if (action === "copyPath") return copy(path, "files.copied.filePath");
     if (action === "reveal") return api.shell.showItemInFolder(path);
     return api.shell.openFolder(path);
   }
 
-  return { showContextMenu, currentFileAction };
+  return { showContextMenu, currentFileAction, createFile };
 }

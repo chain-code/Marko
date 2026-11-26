@@ -46,15 +46,41 @@
   max-height: 8em;
 }
 
-/* 注释在编辑区灰色显示原文（B-12） */
+/* 注释在编辑区显示原文（B-12）：颜色、字体同 Typora */
 #write .md-comment {
-  color: var(--md-muted);
+  color: var(--md-comment);
+  font-family: var(--md-mono);
+  opacity: 0.6;
+}
+
+/* HTML 块的上下边距同 Typora 的 md-rawblock；单独一行的注释在 Typora 里是一个段落 */
+#write .md-html-block {
+  margin: 1rem 0;
+}
+
+#write .md-html-block.md-html-comment {
+  margin: 0.8em 0;
 }
 
 /* 选中的整块（代码块、公式块、表格） */
 #write .md-node-selected {
   outline: 2px solid var(--md-selection);
   outline-offset: 2px;
+}
+
+/*
+ * 编辑区的表格没有 thead（表头行也在 tbody 里）：斑马纹按数据行算，第二、四……个数据行有底色（同 Typora、导出的 thead + tbody）
+ */
+#write table:not(:has(thead)) tr:first-child {
+  background: var(--md-table-stripe);
+}
+
+#write table:not(:has(thead)) tr:nth-child(2n) {
+  background: transparent;
+}
+
+#write table:not(:has(thead)) tr:nth-child(2n + 3) {
+  background: var(--md-table-stripe);
 }
 
 /* 表格里选中的单元格（prosemirror-tables） */
@@ -84,6 +110,15 @@
   line-height: inherit;
 }
 
+/* 代码的行：左边再缩 4px，每行左右 4px（同 Typora 的 .CodeMirror-lines、.CodeMirror pre） */
+#write .md-fences .cm-content {
+  padding: 0 0 0 4px;
+}
+
+#write .md-fences .cm-line {
+  padding: 0 4px;
+}
+
 #write .cm-editor .cm-gutters {
   border-right: 0;
   background: transparent;
@@ -107,43 +142,81 @@
   text-align: left;
 }
 
+/* 显示公式（B-7）：容器是块、上下 4px（同 Typora 的编辑区） */
+#write .md-math-block mjx-container[display="true"] {
+  display: block;
+  margin: 4px 0;
+}
+
 #write .md-math-container.md-math-empty::before {
   color: var(--md-muted);
   content: "$$";
 }
 
-/* 脚注定义（B-11）：前面显示标签，后面是回到引用处的链接 */
-#write .md-def-footnote {
-  display: flex;
-  gap: 0.5em;
-  align-items: baseline;
+/*
+ * 脚注定义（B-11），同 Typora 的编辑区：「[^标签] : 内容 ↩」字小一号、淡一些；标签加粗，前后的「[^」「] :」是浅灰色。
+ * 内容的第一段接在标签后面（同一行），后面的段落另起
+ */
+#write .footnotes {
+  margin: 1em 0;
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+#write .footnotes + .footnotes {
+  margin-top: 0;
+}
+
+#write .md-def-name {
+  position: relative;
+  display: inline-block;
+  margin-right: 1ch;
+  padding: 0 2.5ch 0 2ch;
+  font-size: 1em;
+  font-weight: 700;
+  text-align: center;
+  white-space: nowrap;
+}
+
+#write .md-def-name::before,
+#write .md-def-name::after {
+  position: absolute;
+  color: var(--md-def-mark);
+  font-weight: 400;
+}
+
+#write .md-def-name::before {
+  left: 0;
+  content: "[^";
+}
+
+#write .md-def-name::after {
+  right: 0;
+  content: "] :";
 }
 
 #write .md-def-footnote > .md-def-content {
-  flex: 1;
-  min-width: 0;
+  display: inline;
 }
 
-#write .md-def-footnote > .md-def-content > :first-child {
-  margin-top: 0;
+#write .md-def-footnote > .md-def-content > p:first-child {
+  display: inline;
+  margin: 0;
 }
 
 #write .md-def-footnote > .md-def-content > :last-child {
   margin-bottom: 0;
 }
 
-#write .md-def-name {
-  color: var(--md-muted);
-  font-family: var(--md-mono);
-  font-size: 0.85em;
-  white-space: nowrap;
+#write .md-def-backlinks::before {
+  content: " ";
 }
 
 #write .md-def-backlink {
-  margin-left: 0.25em;
   color: var(--md-link);
+  font-family: ui-monospace, sans-serif;
+  text-decoration: underline;
   cursor: pointer;
-  text-decoration: none;
 }
 
 /* 目录（B-10）的条目可以点 */
@@ -159,15 +232,19 @@
 
 #write .md-task-checkbox {
   cursor: pointer;
+  /* 同 Typora 跟着系统的强调色（主进程写进来的变量，main/accent.ts） */
+  accent-color: var(--app-system-accent, auto);
 }
 
 /* 查找（N-1）：所有匹配和当前的匹配（prosemirror-search 的类名；CodeMirror 里也是这两个） */
 #write .ProseMirror-search-match {
-  background: var(--md-search-match, rgba(255, 213, 0, 0.4));
+  background: var(--md-search-match, rgba(248, 192, 116, 0.3));
 }
 
+/* 当前的匹配：黑底白字（同 Typora） */
 #write .ProseMirror-active-search-match {
-  background: var(--md-search-active, rgba(255, 150, 0, 0.6));
+  background: var(--md-search-active, #000);
+  color: var(--md-search-active-text, #fff);
 }
 
 /* Emoji 补全的候选列表（I-5，编辑器自带的默认界面） */
@@ -201,16 +278,22 @@
   font-family: var(--md-mono, monospace);
 }
 
-/* 源码模式（E-11）：整篇源码的 CodeMirror，放在编辑区的位置上 */
+/*
+ * 源码模式（E-11）：整篇源码的 CodeMirror，放在编辑区的位置上。样子同 Typora 的源代码模式：正文的字体，800px 宽、居中，
+ * 左边 60px 是行号（只显示几行），光标所在行浅灰底一整条；标题粉色，代码等宽蓝灰，链接橙色带下划线，HTML 标签红褐色，引用灰褐色。
+ * CodeMirror 自带的样式类名带一层主题的类，这里多写一层 .cm-editor 盖过它
+ */
+/* 上面比编辑区多空 28px（同 Typora 的 #typora-source） */
 .md-source-mode {
-  max-width: var(--md-content-width, 860px);
+  max-width: 800px;
   margin: 0 auto;
-  padding: 30px 30px 100px;
+  padding-top: 28px;
 }
 
 .md-source-mode .cm-editor {
-  font-family: var(--md-mono, monospace);
-  font-size: 0.95em;
+  color: var(--md-text);
+  font-family: var(--md-font);
+  font-size: var(--md-font-size, 16px);
   line-height: 1.6;
 }
 
@@ -218,9 +301,136 @@
   outline: none;
 }
 
+.md-source-mode .cm-editor .cm-scroller {
+  font-family: inherit;
+  line-height: inherit;
+}
+
+.md-source-mode .cm-editor .cm-content {
+  padding: 30px 0 60px;
+}
+
+.md-source-mode .cm-editor .cm-line {
+  padding: 0 30px 0 4px;
+}
+
+.md-source-mode .cm-editor .cm-gutters {
+  border-right: none;
+  background: transparent;
+  color: inherit;
+}
+
+.md-source-mode .cm-editor .cm-lineNumbers {
+  width: 60px;
+}
+
+.md-source-mode .cm-editor .cm-lineNumbers .cm-gutterElement {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 0.1rem 22px 0 0;
+  color: transparent;
+  font-family: var(--md-mono);
+  font-size: 0.8rem;
+  text-align: right;
+}
+
+.md-source-mode .cm-editor .cm-lineNumbers .md-line-number-shown,
+.md-source-mode .cm-editor .cm-lineNumbers .cm-activeLineGutter {
+  color: var(--md-source-line-number, rgba(51, 51, 51, 0.6));
+}
+
+.md-source-mode .cm-editor .cm-activeLine,
+.md-source-mode .cm-editor .cm-activeLineGutter {
+  background: var(--md-source-active-line, rgba(204, 204, 204, 0.2));
+}
+
 .md-source-mode .cm-header {
-  color: var(--md-tok-keyword);
+  color: var(--md-source-header, #d94f8a);
   font-weight: 700;
+}
+
+.md-source-mode .cm-header1 {
+  font-size: 2em;
+}
+
+.md-source-mode .cm-header2 {
+  font-size: 1.4em;
+}
+
+.md-source-mode .cm-strong {
+  font-weight: 700;
+}
+
+.md-source-mode .cm-em {
+  font-style: italic;
+}
+
+.md-source-mode .cm-strikethrough {
+  text-decoration: line-through;
+}
+
+/* 行内代码、代码块（CodeMirror 的 markdown 把它们都标成 monospace） */
+.md-source-mode .cm-comment {
+  color: var(--md-source-code, #4a5a9f);
+  font-family: var(--md-mono);
+}
+
+.md-source-mode .cm-link {
+  color: var(--md-source-link, #c47a0f);
+  text-decoration: underline;
+}
+
+.md-source-mode .cm-string,
+.md-source-mode .cm-string-2 {
+  color: var(--md-source-string, #7e86a9);
+}
+
+.md-source-mode .cm-tag {
+  color: var(--md-source-tag, #a94442);
+}
+
+.md-source-mode .cm-quote {
+  color: var(--md-source-quote, #958486);
+}
+
+/* 列表照正文的颜色（同 Typora） */
+.md-source-mode .cm-variable-2 {
+  color: inherit;
+}
+
+/* 代码块里的代码按语言着色：同编辑区的代码块（--md-tok-*）。#、**、[] 这些标记（cm-meta）不单独上色，跟着所在的标题、链接 */
+.md-source-mode .cm-keyword {
+  color: var(--md-tok-keyword);
+}
+
+.md-source-mode .cm-number,
+.md-source-mode .cm-atom {
+  color: var(--md-tok-number);
+}
+
+.md-source-mode .cm-variable {
+  color: var(--md-tok-variable);
+}
+
+.md-source-mode .cm-def,
+.md-source-mode .cm-builtin {
+  color: var(--md-tok-definition);
+}
+
+.md-source-mode .cm-variable-3 {
+  color: var(--md-tok-type);
+}
+
+.md-source-mode .cm-property {
+  color: var(--md-tok-property);
+}
+
+.md-source-mode .cm-operator {
+  color: var(--md-tok-operator);
+}
+
+.md-source-mode .cm-attribute {
+  color: var(--md-tok-attribute);
 }
 
 /* 单独成段的图片（M-1）：同 base.css 里 `p > .md-image:only-child` 的规则（编辑区的段落里还有藏起来的原文） */
@@ -271,8 +481,12 @@
   transition: opacity 0.2s;
 }
 
-/* 大文档（X-3）：窗口外面的顶层块不排版、不绘制（浏览器按需排），输入、滚动只重排看得见的部分 */
-#write > * {
+/*
+ * 大文档（X-3）：窗口外面的顶层块不排版、不绘制（浏览器按需排），输入、滚动只重排看得见的部分。
+ * 列表、引用、警告框、定义列表、脚注定义、目录这些装着别的块的不加：content-visibility 带布局隔离，里面第一块、最后一块的外边距
+ * 就不能和外面合并了（Typora 里能合并，列表会因此多出 8px）
+ */
+#write > :not(ul, ol, blockquote, dl, .md-alert, .md-def-footnote, .md-toc) {
   content-visibility: auto;
   contain-intrinsic-size: auto 2em;
 }

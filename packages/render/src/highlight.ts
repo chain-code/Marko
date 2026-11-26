@@ -29,6 +29,9 @@ export const codeHighlighter = tagHighlighter([
   { tag: t.tagName, class: "cm-tag" },
   { tag: t.angleBracket, class: "cm-tag cm-bracket" },
   { tag: t.operator, class: "cm-operator" },
+  // 一级、二级标题另加级别（同 Typora 的源代码模式，标题按级别放大）
+  { tag: t.heading1, class: "cm-header cm-header1" },
+  { tag: t.heading2, class: "cm-header cm-header2" },
   { tag: t.heading, class: "cm-header" },
   { tag: t.quote, class: "cm-quote" },
   { tag: t.list, class: "cm-variable-2" },

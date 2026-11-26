@@ -39,8 +39,8 @@ test("F-18：GB18030 认得出、状态栏显示；换成 UTF-8 重新打开是�
 
   // 菜单里有这一项（12 种编码）
   const encodings = await app.app.evaluate(({ Menu }) => {
-    const file = Menu.getApplicationMenu()?.items.find((item) => item.label === "文件");
-    return file?.submenu?.items.find((item) => item.label === "以其他编码重新打开")?.submenu?.items.length ?? 0;
+    const file = Menu.getApplicationMenu()?.items.find((item) => item.label.replace(/\u200b/g, "") === "文件(&F)");
+    return file?.submenu?.items.find((item) => item.label === "选择编码重新打开")?.submenu?.items.length ?? 0;
   });
   expect(encodings).toBe(12);
 

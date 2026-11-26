@@ -54,25 +54,25 @@ test("N-1、N-2：边输入边找、上一个下一个、滚到匹配；F3 只�
   const status = window.getByTestId("find-status");
   await expect(input).toBeFocused();
   await input.pressSequentially("apple");
-  await expect(status).toHaveText("第 1 个，共 3 个");
+  await expect(status).toHaveText("1 / 3");
   await expect(window.locator("#write .ProseMirror-search-match, #write .ProseMirror-active-search-match")).toHaveCount(3);
   await input.press("Enter");
-  await expect(status).toHaveText("第 2 个，共 3 个");
+  await expect(status).toHaveText("2 / 3");
   await input.press("F3");
-  await expect(status).toHaveText("第 3 个，共 3 个");
+  await expect(status).toHaveText("3 / 3");
   // 第三个在很下面：滚过去了（焦点在查找框里，编辑器自己不滚）
   const top = await window.locator("#write .ProseMirror-active-search-match").evaluate((element) => element.getBoundingClientRect().top);
   expect(top).toBeGreaterThan(0);
   expect(top).toBeLessThan(await window.evaluate(() => window.innerHeight));
   await input.press("Shift+Enter");
-  await expect(status).toHaveText("第 2 个，共 3 个");
+  await expect(status).toHaveText("2 / 3");
 
   // 焦点在编辑器里按 F3：编辑器处理了，菜单的 F3 不会再走一次（走两次会绕回第 1 个）
   await window.locator("#write").evaluate((element) => (element as HTMLElement).focus());
   await pressKey(app, "F3");
-  await expect(status).toHaveText("第 3 个，共 3 个");
+  await expect(status).toHaveText("3 / 3");
   await window.waitForTimeout(300);
-  await expect(status).toHaveText("第 3 个，共 3 个");
+  await expect(status).toHaveText("3 / 3");
 
   // Esc 关掉：高亮去掉
   await input.focus();
@@ -83,13 +83,13 @@ test("N-1、N-2：边输入边找、上一个下一个、滚到匹配；F3 只�
   await pressKey(app, "F3");
   await expect(bar).toBeVisible();
   await expect(input).toHaveValue("apple");
-  await expect(status).toContainText("共 3 个");
+  await expect(status).toContainText("/ 3");
 
   // 全部替换：一步撤销
   await menu(app, "find.replace");
   await window.getByTestId("replace-input").fill("pear");
   await window.getByTestId("replace-all").click();
-  await expect(status).toHaveText("没有找到");
+  await expect(status).toHaveText("无结果");
   await expect(window.locator("#write p").first()).toHaveText("pear banana pear");
   await menu(app, "editor.undo");
   await expect(window.locator("#write p").first()).toHaveText("apple banana apple");

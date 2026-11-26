@@ -3,9 +3,10 @@
     <ElTreeV2
       v-if="height > 0"
       ref="tree"
-      :data="entries"
+      :data="treeData"
       :height="height"
-      :item-size="26"
+      :item-size="29"
+      :indent="8"
       :props="{ value: 'path', label: 'name', children: 'children' }"
       :current-node-key="current ?? undefined"
       :default-expanded-keys="expandedKeys"
@@ -17,20 +18,30 @@
       @node-contextmenu="onContextMenu"
     >
       <template #default="{ data }">
-        <span class="file-tree-item" :class="{ folder: data.kind === 'folder' }" :title="data.path">{{ data.name }}</span>
+        <span class="file-node" :class="{ 'is-folder': data.kind === 'folder', 'is-root': data.path === root }" :title="data.path">
+          <!-- 子文件夹前面是展开的箭头，文件和根文件夹前面空着（同 Typora） -->
+          <span class="file-node-state">
+            <svg v-if="data.kind === 'folder' && data.path !== root" viewBox="0 0 8 8" :class="{ 'is-open': expanded.has(data.path) }" aria-hidden="true"><path d="M2 1 L6 4 L2 7 Z" /></svg>
+          </span>
+          <svg v-if="data.kind === 'folder'" class="file-node-icon" viewBox="0 0 14 12" aria-hidden="true"><path d="M0.5 1.5 Q0.5 0.5 1.5 0.5 H5 L6.5 2 H12.5 Q13.5 2 13.5 3 V10.5 Q13.5 11.5 12.5 11.5 H1.5 Q0.5 11.5 0.5 10.5 Z" /></svg>
+          <svg v-else class="file-node-icon is-file" viewBox="0 0 12 14" aria-hidden="true"><path d="M1 0.5 H7.5 L11 4 V13.5 H1 Z M7.5 0.5 V4 H11" /><path d="M3 7 H9 M3 9.5 H9" /></svg>
+          <span class="file-node-label" :class="{ 'file-tree-item': data.path !== root, 'file-tree-root': data.path === root }"><span class="file-node-name">{{ stemOf(data) }}</span><span class="file-node-ext">{{ extensionOf(data) }}</span></span>
+        </span>
       </template>
     </ElTreeV2>
   </div>
 </template>
 
 <script setup lang="ts">
-// 文件树（W-2）：ElTreeV2（虚拟滚动，大文件夹也不卡），文件夹在前、按名称的自然顺序（主进程排好）；点文件按 F-3 打开；当前文件高亮。
-// ElTreeV2 没有的自己补：数据变了（工作区刷新）它把展开的文件夹全收起来——记住展开了哪些交回给它；
-// 键盘 ↑ ↓ 移动、→ 展开或进到第一项、← 收起或回到上一层、回车打开文件或展开收起；「在文件树中定位」（reveal）
+// 文件树（W-2，样子同 Typora）：最上面是工作区的根文件夹，下面是里面的文件夹和 Markdown 文件，文件夹在前、按名称的自然顺序（主进程排好）；
+// 点文件按 F-3 打开；当前文件灰底、左边一条线。ElTreeV2（虚拟滚动，大文件夹也不卡）没有的自己补：数据变了（工作区刷新）它把展开的
+// 文件夹全收起来——记住展开了哪些交回给它；键盘 ↑ ↓ 移动、→ 展开或进到第一项、← 收起或回到上一层、回车打开文件或展开收起；
+// 「在文件树中定位」（reveal）
 import type { WorkspaceEntry } from "@marko/shared";
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { basename } from "../../paths.ts";
 
-const props = defineProps<{ entries: WorkspaceEntry[]; current: string | null }>();
+const props = defineProps<{ root: string; entries: WorkspaceEntry[]; current: string | null }>();
 const emit = defineEmits<{ open: [path: string]; contextmenu: [entry: WorkspaceEntry] }>();
 
 interface TreeHandle {
@@ -42,10 +53,32 @@ interface TreeHandle {
   scrollToNode(key: string, strategy?: "auto" | "smart" | "center" | "start" | "end"): void;
 }
 
+/** 根文件夹也是一项（同 Typora），里面是工作区的文件夹和文件 */
+const treeData = computed<WorkspaceEntry[]>(() => [{ kind: "folder", name: basename(props.root) || props.root, path: props.root, children: props.entries } as WorkspaceEntry]);
+
+function stemOf(entry: WorkspaceEntry): string {
+  if (entry.kind === "folder") return entry.name;
+  const dot = entry.name.lastIndexOf(".");
+  return dot > 0 ? entry.name.slice(0, dot) : entry.name;
+}
+
+function extensionOf(entry: WorkspaceEntry): string {
+  if (entry.kind === "folder") return "";
+  const dot = entry.name.lastIndexOf(".");
+  return dot > 0 ? entry.name.slice(dot) : "";
+}
+
 const box = ref<HTMLElement | null>(null);
 const tree = ref<TreeHandle | null>(null);
 const height = ref(0);
-const expanded = ref(new Set<string>());
+/** 展开了的文件夹；根文件夹一开始就展开 */
+const expanded = ref(new Set<string>([props.root]));
+watch(
+  () => props.root,
+  (root) => {
+    if (!expanded.value.has(root)) expanded.value = new Set([...expanded.value, root]);
+  },
+);
 /**
  * 交给 ElTreeV2 的：只给上层都开着的（它会把给的键的上层一起展开——收起 notes 时里面开着的 deep 不能把 notes 又撑开）；
  * 自己记着全部，再打开 notes 时 deep 照样是开的
@@ -76,7 +109,7 @@ const parents = computed(() => {
       if (entry.children) walk(entry.children, entry.path);
     }
   };
-  walk(props.entries, null);
+  walk(treeData.value, null);
   return map;
 });
 
@@ -88,7 +121,7 @@ const byPath = computed(() => {
       if (entry.children) walk(entry.children);
     }
   };
-  walk(props.entries);
+  walk(treeData.value);
   return map;
 });
 
@@ -101,7 +134,7 @@ function visible(): WorkspaceEntry[] {
       if (entry.children && expanded.value.has(entry.path)) walk(entry.children);
     }
   };
-  walk(props.entries);
+  walk(treeData.value);
   return out;
 }
 
@@ -170,7 +203,7 @@ function onContextMenu(event: Event, data: WorkspaceEntry): void {
   emit("contextmenu", data);
 }
 
-/** 「视图 → 在文件树中定位」：展开到这个文件，选中、滚到看得见；不在工作区里返回 false */
+/** 「在侧边栏中显示」：展开到这个文件，选中、滚到看得见；不在工作区里返回 false */
 async function reveal(path: string): Promise<boolean> {
   if (!byPath.value.has(path)) return false;
   const next = new Set(expanded.value);
@@ -196,19 +229,94 @@ onBeforeUnmount(() => observer?.disconnect());
 </script>
 
 <style scoped>
+/* 样子同 Typora 的文件树：行高 29px，每层缩进 8px；字是灰的，当前文件灰底、黑字、左边一条线 */
 .file-tree {
   height: 100%;
   overflow: hidden;
   outline: none;
+  color: var(--app-file-text, #777);
 }
 
-.file-tree-item {
+.file-tree :deep(.el-tree) {
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+}
+
+.file-tree :deep(.el-tree-node__expand-icon) {
+  display: none;
+}
+
+.file-tree :deep(.el-tree-node__content) {
+  padding-left: 8px;
+}
+
+.file-tree :deep(.el-tree-node__content:hover) {
+  background: var(--app-item-hover, rgba(229, 229, 229, 0.59));
+}
+
+.file-tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
+  background: var(--app-active-file, #eee);
+  box-shadow: inset 4px 0 0 var(--app-active-file-border, #777);
+  color: var(--md-text, #333);
+}
+
+.file-node {
+  display: flex;
+  align-items: center;
+  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.file-tree-item.folder {
-  font-weight: 500;
+.file-node-state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 8px;
+  margin-left: 8px;
+}
+
+.file-node.is-root .file-node-state {
+  display: none;
+}
+
+.file-node-state svg {
+  width: 7px;
+  height: 7px;
+  fill: currentColor;
+  transition: transform 0.15s;
+}
+
+.file-node-state svg.is-open {
+  transform: rotate(90deg);
+}
+
+.file-node-icon {
+  flex: none;
+  width: 13px;
+  height: 12px;
+  margin: 0 4px 0 0;
+  fill: currentColor;
+}
+
+.file-node.is-root .file-node-icon {
+  margin-left: 8px;
+}
+
+.file-node-icon.is-file {
+  width: 11px;
+  height: 13px;
+  margin-left: 2px;
+  margin-right: 5px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+}
+
+.file-node-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

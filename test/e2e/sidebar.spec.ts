@@ -69,7 +69,7 @@ test("W-1～W-3 打开文件夹：文件树、文件列表；点文件打开；�
   await expect(list.locator(".file-list-name")).toContainText(["new.md"]);
 });
 
-test("W-5 全局搜索：边输入边搜、按文件分组；点结果在这个窗口里打开并选中；有改动时先保存（S-3 默认）", async () => {
+test("W-5 全局搜索：边输入边搜、按文件分组；点结果在这个窗口里打开并选中；开了「切换文件时自动保存」时先保存（S-3）", async () => {
   mkdirSync(join(dir, "notes"));
   mkdirSync(join(dir, "node_modules"));
   writeFileSync(join(dir, "notes", "a.md"), "# A\n\nfind the needle here\n");
@@ -78,6 +78,8 @@ test("W-5 全局搜索：边输入边搜、按文件分组；点结果在这个�
   launched = await launchApp();
   const window = await launched.app.firstWindow();
   await window.waitForSelector("#write");
+  // 「切换文件时自动保存」默认关（同 Typora）：这里看打开着就先保存
+  await window.evaluate(() => window.marko.settings.set({ saveOnFileSwitch: true }));
   await launched.app.evaluate(({ dialog }, folder) => {
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [folder] })) as typeof dialog.showOpenDialog;
   }, dir);
@@ -97,16 +99,17 @@ test("W-5 全局搜索：边输入边搜、按文件分组；点结果在这个�
   await panel.locator(".search-line", { hasText: "second needle" }).click();
   await expect(window.locator("#write p").last()).toHaveText("second needle");
   await expect.poll(() => window.evaluate(() => document.getSelection()?.toString())).toBe("needle");
-  await expect(window.getByTestId("word-count")).toHaveText("已选 1 词");
+  // 有选区时状态栏是「选中的 / 全文的」（同 Typora）
+  await expect(window.getByTestId("word-count")).toHaveText(/^1 \/ \d+ 词$/);
 
-  // 改一下，再点 a.md 的结果：先保存 b.md（切换文件时自动保存，默认开），再换
+  // 改一下，再点 a.md 的结果：先保存 b.md（切换文件时自动保存），再换
   await window.keyboard.type("NEW");
   await panel.locator(".search-line", { hasText: "find the needle here" }).click();
   await expect(window.locator("#write h1")).toHaveText("A");
   await expect(window.locator("#write p")).toHaveText("find the needle here");
   await expect.poll(() => readFileSync(join(dir, "b.md"), "utf8")).toBe("needle at start\n\nsecond NEW\n");
   await expect.poll(() => window.evaluate(() => document.getSelection()?.toString())).toBe("needle");
-  await expect(window.getByTestId("word-count")).toHaveText("已选 1 词");
+  await expect(window.getByTestId("word-count")).toHaveText(/^1 \/ \d+ 词$/);
   // 选区收起来：整篇的字数（A、find、the、needle、here）
   await window.keyboard.press("End");
   await expect(window.getByTestId("word-count")).toHaveText("5 词");

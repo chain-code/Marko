@@ -9,7 +9,7 @@
  */
 @layer marko-base {
   :root {
-    --md-font: "Open Sans", "Clear Sans", "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", "Segoe UI Emoji", sans-serif;
+    --md-font: "Open Sans", "Clear Sans", "Helvetica Neue", Helvetica, Arial, "Segoe UI Emoji", "SF Pro", sans-serif;
     --monospace: "Lucida Console", Consolas, "Courier", monospace;
     --md-mono: var(--monospace);
     --md-font-size: 16px;
@@ -31,15 +31,22 @@
     --md-quote-text: #777777;
     --md-table-stripe: #f8f8f8;
     --md-mark-background: #ffff00;
+    --md-mark-text: #000000;
     --md-kbd-border: #adb3b9;
     --md-kbd-background: #ffffff;
+    --md-kbd-text: #242729;
     --md-selection: var(--select-text-bg-color);
     --md-alert-note: #0969da;
-    --md-alert-tip: #1a7f37;
+    --md-alert-tip: #1f883d;
     --md-alert-important: #8250df;
     --md-alert-warning: #9a6700;
     --md-alert-caution: #cf222e;
     --md-error: #cf222e;
+    --md-footnote-background: rgba(238, 238, 238, 0.7);
+    --md-footnote-text: #555555;
+    --md-footnote-area-text: #888888;
+    --md-comment: #a27f03;
+    --md-def-mark: #c7c5c5;
     /* 代码高亮的颜色（cm-* 类名，CodeMirror 和静态高亮共用，1.11 节） */
     --md-tok-keyword: #770088;
     --md-tok-string: #aa1111;
@@ -76,8 +83,10 @@
     background: var(--md-selection);
   }
 
-  #write > :first-child {
-    margin-top: 1rem;
+  /* 文档开头是列表时上边距大一些（同 Typora 的 Github 主题）；其余的块在开头时外边距照常 */
+  #write > ul:first-child,
+  #write > ol:first-child {
+    margin-top: 30px;
   }
 
   /* 标题 */
@@ -95,14 +104,12 @@
   }
 
   #write h1 {
-    padding-bottom: 0.3em;
     border-bottom: 1px solid var(--md-heading-rule);
     font-size: 2.25em;
     line-height: 1.2;
   }
 
   #write h2 {
-    padding-bottom: 0.3em;
     border-bottom: 1px solid var(--md-heading-rule);
     font-size: 1.75em;
     line-height: 1.225;
@@ -142,11 +149,17 @@
   #write ol,
   #write dl,
   #write table,
-  #write pre,
-  #write .md-math-block,
-  #write .md-diagram-panel,
-  #write .md-alert {
+  #write .md-diagram-panel {
     margin: 0.8em 0;
+  }
+
+  #write pre,
+  #write .md-fences {
+    margin: 15px 0;
+  }
+
+  #write .md-math-block {
+    margin: 1rem 0;
   }
 
   #write li > ol,
@@ -173,12 +186,15 @@
     list-style-type: none;
   }
 
+  /* 复选框的字号随正文（同 Typora 的 input { font: inherit }），外边距按它算 */
   #write .task-list-item > input {
     position: absolute;
-    top: 0.35em;
-    left: -1.6em;
-    margin: 0;
-    accent-color: var(--md-link);
+    top: 0;
+    left: 0;
+    margin: calc(1em - 10px) 0 0 -1.3em;
+    padding: 0;
+    font: inherit;
+    line-height: normal;
   }
 
   /* 导出的文件里复选框点不动（同 Typora：不用 disabled，免得变灰） */
@@ -221,11 +237,6 @@
   /* 行内 */
   #write a {
     color: var(--md-link);
-    text-decoration: none;
-  }
-
-  #write a:hover {
-    text-decoration: underline;
   }
 
   #write code,
@@ -245,7 +256,8 @@
     border-radius: 3px;
     background: var(--md-kbd-background);
     box-shadow: 0 1px 0 rgba(12, 13, 14, 0.2), 0 0 0 2px var(--md-kbd-background) inset;
-    font-family: var(--md-mono);
+    color: var(--md-kbd-text);
+    font-family: monospace;
     font-size: 0.8em;
     white-space: nowrap;
     vertical-align: middle;
@@ -253,7 +265,24 @@
 
   #write mark {
     background: var(--md-mark-background);
-    color: inherit;
+    color: var(--md-mark-text);
+  }
+
+  /* 上标、下标：同 Typora（它全局用 bootstrap 的这几条） */
+  #write sup,
+  #write sub {
+    position: relative;
+    font-size: 75%;
+    line-height: 0;
+    vertical-align: baseline;
+  }
+
+  #write sup {
+    top: -0.5em;
+  }
+
+  #write sub {
+    bottom: -0.25em;
   }
 
   /* 导出的是 title；编辑区里是 data-tip（提示框由组件显示，B-16） */
@@ -300,20 +329,23 @@
     color: var(--md-quote-text);
   }
 
-  #write blockquote > :first-child,
-  #write .md-alert > :first-child {
+  #write blockquote blockquote {
+    padding-right: 0;
+  }
+
+  #write blockquote > :first-child {
     margin-top: 0;
   }
 
-  #write blockquote > :last-child,
-  #write .md-alert > :last-child {
+  #write blockquote > :last-child {
     margin-bottom: 0;
   }
 
   #write .md-alert {
     --md-alert-color: var(--md-alert-note);
-    padding: 0.5em 1em;
-    border-left: 4px solid var(--md-alert-color);
+    margin: 0 0 16px;
+    padding: 0 1em;
+    border-left: 0.25em solid var(--md-alert-color);
   }
 
   #write .md-alert-tip {
@@ -334,6 +366,7 @@
 
   /* 标题：图标 + 名称，在第一段开头（同 Typora 的 base.css） */
   #write .md-alert-text {
+    margin-right: 1ch;
     color: var(--md-alert-color);
     font-size: 0.9rem;
     font-weight: 700;
@@ -357,7 +390,11 @@
     background: var(--md-pre-background);
     font-family: var(--md-mono);
     font-size: 0.9em;
-    line-height: 1.5;
+  }
+
+  /* 代码的行再往里缩 4px（Typora 的 Github 主题给 .CodeMirror-lines 的） */
+  #write .md-fences .CodeMirror-code {
+    padding-left: 4px;
   }
 
   #write pre code {
@@ -560,78 +597,96 @@
     height: auto;
   }
 
-  /* 目录 */
+  /* 目录（同 Typora：条目是链接色，按级别往右缩进，下面留 20px） */
   #write .md-toc {
-    margin: 20px 0;
-    font-size: 0.9em;
+    position: relative;
+    min-height: 3.58rem;
+    margin-top: 20px;
+    padding-bottom: 20px;
+    border-radius: 10px;
+    font-size: 0.9rem;
   }
 
   #write .md-toc-content {
-    display: flex;
-    flex-direction: column;
-    margin: 0;
+    position: relative;
+    margin: 20px 0;
   }
 
   #write .md-toc-item {
     display: block;
+    color: var(--md-link);
+  }
+
+  #write .md-toc-item a {
+    text-decoration: none;
   }
 
   #write .md-toc-inner {
-    color: var(--md-link);
+    display: inline-block;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  #write .md-toc-inner:hover {
+    text-decoration: underline;
   }
 
   #write .md-toc-h1 .md-toc-inner {
     font-weight: bold;
   }
 
-  #write .md-toc-h2 {
-    padding-left: 2em;
+  #write .md-toc-h2 .md-toc-inner {
+    margin-left: 2em;
   }
 
-  #write .md-toc-h3 {
-    padding-left: 4em;
+  #write .md-toc-h3 .md-toc-inner {
+    margin-left: 4em;
   }
 
-  #write .md-toc-h4 {
-    padding-left: 6em;
+  #write .md-toc-h4 .md-toc-inner {
+    margin-left: 6em;
   }
 
-  #write .md-toc-h5 {
-    padding-left: 8em;
+  #write .md-toc-h5 .md-toc-inner {
+    margin-left: 8em;
   }
 
-  #write .md-toc-h6 {
-    padding-left: 10em;
+  #write .md-toc-h6 .md-toc-inner {
+    margin-left: 10em;
   }
 
-  /* 脚注 */
-  #write .md-footnote {
-    font-size: 0.8em;
-    line-height: 0;
+  /* 脚注（同 Typora）：引用是灰底的小标签；导出时文末的脚注区字小一号、灰色 */
+  #write sup.md-footnote {
+    margin: 0 0.2ch;
+    padding: 2px 4px;
+    border-radius: 4px;
+    background-color: var(--md-footnote-background);
+    color: var(--md-footnote-text);
+    cursor: pointer;
   }
 
-  #write .md-footnote a {
-    padding: 0 2px;
-    border-radius: 3px;
-    background: var(--md-code-background);
+  #write sup.md-footnote a,
+  #write sup.md-footnote a:hover {
+    color: inherit;
+    text-decoration: inherit;
   }
 
   #write .footnotes-area {
-    margin-top: 2em;
-    color: var(--md-muted);
-    font-size: 0.9em;
-  }
-
-  #write .footnotes-area hr {
-    margin: 1em 0;
+    margin-top: 0.714rem;
+    padding-bottom: 0.143rem;
+    color: var(--md-footnote-area-text);
+    white-space: normal;
   }
 
   #write .footnote-line {
-    margin: 0.3em 0;
+    margin-top: 0.714em;
+    font-size: 0.7em;
+    white-space: pre-wrap;
   }
 
-  #write .md-fn-count {
-    font-weight: bold;
+  #write .footnote-line a:not(.reversefootnote) {
+    color: inherit;
   }
 
   #write .md-fn-count::after {
@@ -639,7 +694,7 @@
   }
 
   #write .reversefootnote {
-    margin-left: 0.2em;
+    font-family: ui-monospace, sans-serif;
   }
 
   @media print {

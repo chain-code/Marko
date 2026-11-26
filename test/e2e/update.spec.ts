@@ -15,8 +15,8 @@ test("R-4：这个版本不检查更新，手动检查只提示", async () => {
   const window = await app.app.firstWindow();
   await window.waitForSelector("#write");
   await app.app.evaluate(({ BrowserWindow, Menu }) => {
-    const help = Menu.getApplicationMenu()?.items.find((item) => item.label === "帮助");
-    const check = help?.submenu?.items.find((item) => item.label === "检查更新...");
+    const help = Menu.getApplicationMenu()?.items.find((item) => item.label.replace(/\u200b/g, "") === (process.platform === "darwin" ? "帮助" : "帮助(&H)"));
+    const check = help?.submenu?.items.find((item) => item.label === "检查更新…");
     if (!check) throw new Error("帮助菜单里没有「检查更新...」");
     check.click(undefined, BrowserWindow.getAllWindows()[0]);
   });

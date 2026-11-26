@@ -8,9 +8,13 @@
   --app-background: #f7f7f7;
   --app-panel: #ffffff;
   --app-panel-subtle: #f3f4f6;
-  --app-sidebar: #f4f5f7;
+  /* 侧栏的底色同 Typora（W-7） */
+  --app-sidebar: #fafafa;
   --app-border: #d9dde3;
   --app-text: #24272d;
   --app-muted: #6d737c;
   --app-accent: #3b82f6;
+  /* 状态栏（V-3）：上边框、按钮和字数悬停时的底色，同 Typora */
+  --app-status-border: #dddddd;
+  --app-status-hover: #eeeeee;
 }

@@ -20,8 +20,8 @@ test.afterEach(async () => {
 });
 
 test("D-1：普通的公式不加载花体、盲文这些字体块；打开用花体的文档时才加载那一块", async () => {
-  writeFileSync(join(dir, "plain.md"), "# 普通\n\n$x^2 + y^2$\n");
-  writeFileSync(join(dir, "fancy.md"), "# 花体\n\n$\\mathcal{A} + \\mathcal{B}$\n");
+  writeFileSync(join(dir, "plain.md"), "# 普通\n\n$$\nx^2 + y^2\n$$\n");
+  writeFileSync(join(dir, "fancy.md"), "# 花体\n\n$$\n\\mathcal{A} + \\mathcal{B}\n$$\n");
   launched = await launchApp([join(dir, "plain.md")]);
   const app = launched;
   const window = await app.app.firstWindow();

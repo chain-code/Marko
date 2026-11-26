@@ -10,6 +10,8 @@ const ExtensionsSchema = z.object({
   flowchart: z.boolean().default(true),
   sequence: z.boolean().default(true),
   math: z.boolean().default(true),
+  // 行内公式 $…$（同 Typora 默认关）
+  inlineMath: z.boolean().default(false),
   footnote: z.boolean().default(true),
   alerts: z.boolean().default(true),
   emoji: z.boolean().default(true),
@@ -29,20 +31,24 @@ export const SettingsSchema = z.object({
   lineWidth: z.number().int().min(400).max(4000).default(860),
   zoom: z.number().min(0.5).max(3).default(1),
   // S-3 保存与恢复
-  autoSave: z.boolean().default(true),
+  // 默认值同 Typora（偏好设置 → 文件）
+  autoSave: z.boolean().default(false),
   autoSaveIntervalMinutes: z.union([z.literal(1), z.literal(3), z.literal(5), z.literal(10)]).default(3),
-  saveOnFileSwitch: z.boolean().default(true),
+  saveOnFileSwitch: z.boolean().default(false),
   recoverUnsavedDrafts: z.boolean().default(true),
   insertFinalNewline: z.boolean().default(false),
   defaultLineEnding: z.enum(["auto", "lf", "crlf"]).default("auto"),
-  startup: z.enum(["restore", "blank"]).default("restore"),
+  startup: z.enum(["restore", "blank"]).default("blank"),
   // S-4 侧栏与状态栏
   showStatusBar: z.boolean().default(true),
   alwaysShowWordCount: z.boolean().default(true),
-  defaultSidebarTab: z.enum(["files", "outline", "search"]).default("files"),
-  collapsibleOutline: z.boolean().default(true),
+  defaultSidebarTab: z.enum(["files", "outline", "search"]).default("outline"),
+  collapsibleOutline: z.boolean().default(false),
   recordRecentFiles: z.boolean().default(true),
-  readingSpeed: z.union([z.literal(120), z.literal(240), z.literal(382)]).default(240),
+  // 同 Typora 默认每分钟 382 词
+  readingSpeed: z.union([z.literal(120), z.literal(240), z.literal(382)]).default(382),
+  // V-4：状态栏显示的统计（在字数统计里点那一行切换，同 Typora）
+  wordCountMetric: z.enum(["words", "chars", "lines", "minutes"]).default("words"),
   // S-5 输入
   indentSize: z.union([z.literal(2), z.literal(4)]).default(2),
   codeIndentSize: z.number().int().min(2).max(5).default(4),
@@ -50,25 +56,25 @@ export const SettingsSchema = z.object({
   autoPair: z.boolean().default(true),
   emojiAutocomplete: z.enum(["automatic", "escape", "off"]).default("automatic"),
   spellcheck: z.boolean().default(true),
-  copyMarkdownAsPlainText: z.boolean().default(false),
+  copyMarkdownAsPlainText: z.boolean().default(true),
   // S-6 编辑体验（专注、打字机模式在「显示」菜单里切换，也记下来）
   focusMode: z.boolean().default(false),
   typewriterMode: z.boolean().default(false),
   typewriterCenter: z.boolean().default(true),
-  smartQuotes: z.boolean().default(true),
-  smartDashes: z.boolean().default(true),
-  preserveSingleLineBreaks: z.boolean().default(false),
+  smartQuotes: z.boolean().default(false),
+  smartDashes: z.boolean().default(false),
+  preserveSingleLineBreaks: z.boolean().default(true),
   // S-7 代码块（默认语言："" 不指定，其余是语言名）
   defaultCodeLanguage: z.string().default(""),
   defaultCodeLanguageApplyTo: z.enum(["markdown", "menu", "both"]).default("markdown"),
   codeLineNumbers: z.boolean().default(false),
-  codeWrap: z.boolean().default(false),
+  codeWrap: z.boolean().default(true),
   // S-8 Markdown 扩展语法
   extensions: ExtensionsSchema.default(ExtensionsSchema.parse({})),
   autoNumberingForMath: z.union([z.literal(false), z.literal("ams"), z.literal("all")]).default(false),
   // S-9 图片与上传（Token 用 safeStorage 加密另存，不在这里）
-  imageInsertAction: z.enum(["none", "current", "assets", "documentAssets"]).default("assets"),
-  escapeImageUrls: z.boolean().default(true),
+  imageInsertAction: z.enum(["none", "current", "assets", "documentAssets"]).default("none"),
+  escapeImageUrls: z.boolean().default(false),
   addDotSlashToRelativeImagePath: z.boolean().default(false),
   uploadMethod: z.enum(["none", "api", "command"]).default("none"),
   uploadUrl: z.string().default(""),

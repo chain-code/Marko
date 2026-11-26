@@ -209,3 +209,38 @@ describe("K-2、L-2 编辑器的文字由宿主传入", () => {
     expect(getMarkdown(editor)).toContain("![图片描述]");
   });
 });
+
+describe("B-5 任务状态（X-6「段落 → 任务状态」，同 Typora）", () => {
+  it("标记为已完成、未完成只改方括号里的那个字；已经是这个状态的不动", () => {
+    open("- [ ] one\n- [x] two\n", "one");
+    expect(editor.commands.markTaskDone()).toBe(true);
+    expect(getMarkdown(editor)).toBe("- [x] one\n- [x] two\n");
+    expect(editor.commands.markTaskDone()).toBe(false);
+    expect(editor.commands.markTaskUndone()).toBe(true);
+    expect(getMarkdown(editor)).toBe("- [ ] one\n- [x] two\n");
+  });
+
+  it("不是任务项的行不动", () => {
+    open("- plain\n", "plain");
+    expect(editor.commands.markTaskDone()).toBe(false);
+    expect(getMarkdown(editor)).toBe("- plain\n");
+  });
+});
+
+describe("B-15 链接引用（X-6「段落 → 链接引用」，同 Typora）", () => {
+  it("在当前块后面另起一块 `[]: `，前后隔空行，光标在方括号里", () => {
+    open("first\n\nsecond\n", "first");
+    expect(editor.commands.linkReference()).toBe(true);
+    const { value, anchor } = getMarkdownWithSelection(editor);
+    expect(value).toBe("first\n\n[]: \n\nsecond\n");
+    expect(value.slice(anchor - 1, anchor + 1)).toBe("[]");
+    typeText("id");
+    expect(getMarkdown(editor)).toBe("first\n\n[id]: \n\nsecond\n");
+  });
+
+  it("文档最后一块后面", () => {
+    open("only", "only");
+    editor.commands.linkReference();
+    expect(getMarkdown(editor)).toBe("only\n\n[]: ");
+  });
+});

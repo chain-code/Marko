@@ -21,6 +21,7 @@ import {
   prefixNumberedMarkdownLines,
   setHeadingLevel,
   setParagraphText,
+  setTaskStateAtSelection,
   toggleTaskAtSelection,
 } from "./blocks.ts";
 import {
@@ -174,6 +175,8 @@ const SIMPLE: Record<string, SourceCommand> = {
   taskList: text((state) => formatMarkdownLines(state, "task")),
   definitionList: text((state) => formatMarkdownLines(state, "definition")),
   toggleTask: text((state) => toggleTaskAtSelection(state)),
+  markTaskDone: text((state) => setTaskStateAtSelection(state, true)),
+  markTaskUndone: text((state) => setTaskStateAtSelection(state, false)),
   hr: text((state) => insertMarkdownHorizontalRule(state)),
   codeBlock: text((state, settings) => formatMarkdownCodeBlock(state, defaultCodeLanguage(settings, "menu"))),
   mathBlock: text((state) => formatMarkdownMathBlock(state)),
@@ -252,6 +255,8 @@ const SIMPLE: Record<string, SourceCommand> = {
   // B-17：在当前块（列表、引用、表格里时是最外层的块）的上方、下方插入一个空段落
   insertParagraphAbove: insertParagraph("above"),
   insertParagraphBelow: insertParagraph("below"),
+  // B-15：「段落 → 链接引用」
+  linkReference: insertLinkReference(),
   // B-4：缩进、反缩进（列表项连同子项一层，有序列表重新编号）
   indentLines: text((state, settings) => indentSelection(state.value, state.selectionStart, state.selectionEnd, false, settings.indentSize)),
   outdentLines: text((state, settings) => indentSelection(state.value, state.selectionStart, state.selectionEnd, true, settings.indentSize)),
@@ -307,6 +312,26 @@ function insertParagraph(side: "above" | "below"): SourceCommand {
     const blank = /\r?\n[ \t]*\r?\n$/.exec(text.slice(0, lineStart));
     if (blank) return at(lineStart - blank[0].length + blank[0].indexOf("\n") + 1);
     return at(lineStart, eol);
+  };
+}
+
+/**
+ * B-15「段落 → 链接引用」（同 Typora）：在当前块（列表、引用、表格里时是最外层的块）后面另起一块 `[]: `，光标放进方括号。
+ * 前后都隔一个空行（定义不能打断段落）；写好标签和地址以后按 Markdown 重新解析成链接引用定义
+ */
+function insertLinkReference(): SourceCommand {
+  return ({ state, source }) => {
+    const { $from } = state.selection;
+    const top = $from.depth > 0 ? $from.node(1) : $from.nodeAfter;
+    const range = top ? source.map.map.ranges.get(toModel(top)) : undefined;
+    const { text, eol } = source;
+    const at = range ? range.end : text.length;
+    const rest = text.slice(at);
+    const blankAfter = rest.trim() === "" || /^\r?\n[ \t]*\r?\n/.test(rest);
+    const before = at === 0 ? "" : eol + eol;
+    const insertion = `${before}[]: ${blankAfter ? "" : eol}`;
+    const cursor = at + before.length + 1;
+    return { text: text.slice(0, at) + insertion + rest, anchor: cursor, head: cursor };
   };
 }
 
@@ -369,6 +394,9 @@ type SimpleName =
   | "taskList"
   | "definitionList"
   | "toggleTask"
+  | "markTaskDone"
+  | "markTaskUndone"
+  | "linkReference"
   | "hr"
   | "codeBlock"
   | "mathBlock"

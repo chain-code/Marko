@@ -23,6 +23,8 @@ export interface SyntaxOptions {
   flowchart: boolean;
   sequence: boolean;
   math: boolean;
+  /** 行内公式（math 打开时才看；同 Typora 单独一个开关，S-8） */
+  inlineMath: boolean;
   footnotes: boolean;
   callout: boolean;
   emoji: boolean;
@@ -39,6 +41,7 @@ export const DEFAULT_SYNTAX: Readonly<SyntaxOptions> = Object.freeze({
   flowchart: true,
   sequence: true,
   math: true,
+  inlineMath: true,
   footnotes: true,
   callout: true,
   emoji: true,
@@ -127,7 +130,8 @@ export function recordLineBases<T>(run: () => T): { result: T; bases: LineBases 
 function extensionsFor(options: SyntaxOptions): MarkdownExtension[] {
   const extensions: MarkdownExtension[] = [table, TaskList, Strikethrough, cjkEmphasis];
   if (options.autolink) extensions.push(Autolink);
-  if (options.math) extensions.push(mathBlock, inlineMath);
+  if (options.math) extensions.push(mathBlock);
+  if (options.math && options.inlineMath) extensions.push(inlineMath);
   if (options.footnotes) extensions.push(footnote);
   if (options.highlight) extensions.push(highlight);
   if (options.superscript) extensions.push(Superscript);

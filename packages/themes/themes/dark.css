@@ -21,6 +21,13 @@
   --md-mark-background: #6b5d00;
   --md-kbd-border: #424954;
   --md-kbd-background: #1d2127;
+  --md-kbd-text: #d9dde5;
+  --md-mark-text: #ffffff;
+  --md-footnote-background: rgba(255, 255, 255, 0.08);
+  --md-footnote-text: #b8bec8;
+  --md-footnote-area-text: #9aa1ad;
+  --md-comment: #d6b656;
+  --md-def-mark: #5c636e;
   --md-selection: rgba(106, 166, 255, 0.28);
   --md-alert-note: #4493f8;
   --md-alert-tip: #3fb950;
@@ -51,4 +58,30 @@
   --app-text: #e7e9ee;
   --app-muted: #9aa1ad;
   --app-accent: #6aa6ff;
+  --app-status-border: #2b3038;
+  --app-status-hover: #262b33;
+  --app-scrollbar-thumb: rgba(255, 255, 255, 0.3);
+  --app-scrollbar-thumb-active: rgba(255, 255, 255, 0.5);
+  --app-scrollbar-track-hover: rgba(255, 255, 255, 0.05);
+  /* 侧栏（W-7）、偏好设置（S-1）：浅色的值在各组件里写成默认值（同 Typora） */
+  --app-sidebar-border: #2b3038;
+  --app-file-text: #9aa1ad;
+  --app-file-ext: #6d737c;
+  --app-item-hover: rgba(255, 255, 255, 0.06);
+  --app-active-file: #262b33;
+  --app-active-file-border: #9aa1ad;
+  --app-search-count: #262b33;
+  --app-input-border: #3a404a;
+  --app-settings-background: #15181d;
+  --app-settings-header: #171a1f;
+  --app-settings-nav-active: #3a404a;
+  /* 源码模式（E-11）：浅色的值同 Typora，写在 editor.css 里 */
+  --md-source-line-number: rgba(231, 233, 238, 0.5);
+  --md-source-active-line: rgba(255, 255, 255, 0.06);
+  --md-source-header: #f07aac;
+  --md-source-code: #9aa8e8;
+  --md-source-link: #e5a352;
+  --md-source-string: #a3abd0;
+  --md-source-tag: #ec8a87;
+  --md-source-quote: #b3a5a7;
 }

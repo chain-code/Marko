@@ -39,7 +39,7 @@ async function clickMenuItem(app: LaunchedApp, label: string): Promise<void> {
   }, label);
 }
 
-test("V-4、R-5：字数统计（中文一个字一个词）、光标行列；关于里有版本和许可证", async () => {
+test("V-4、R-5：字数统计同 Typora（中文一个字一个词，字符、行按原文）、光标行列；关于里有版本和许可证", async () => {
   const file = join(dir, "count.md");
   writeFileSync(file, "# 标题\n\n正文 hello world\n");
   launched = await launchApp([file]);
@@ -49,10 +49,19 @@ test("V-4、R-5：字数统计（中文一个字一个词）、光标行列；�
   await window.keyboard.press("End");
   await menu(launched, "view.wordCount");
   const panel = window.getByTestId("word-count-panel");
-  await expect(panel).toContainText("词数6");
-  await expect(panel).toContainText("字符数（不算空白）14");
-  await expect(panel).toContainText("第 3 行，第 15 列");
+  // 「# 标题\n\n正文 hello world\n」：标题 2 个字 + 正文 2 个字和两个英文词；原文 21 个字符、4 行；不到 1 分钟
+  await expect(panel).toContainText("≤ 1分钟");
+  await expect(panel).toContainText("4行");
+  await expect(panel).toContainText("6词");
+  await expect(panel).toContainText("21字符");
+  await expect(panel).toContainText("3 行 15 列");
+  // 点「字符」那一行：状态栏改显示字符数
+  await panel.locator('tr[data-metric="chars"]').click();
+  await expect(window.getByTestId("word-count")).toHaveText("21 字符");
+  await panel.locator('tr[data-metric="words"]').click();
+  await expect(window.getByTestId("word-count")).toHaveText("6 词");
   await window.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
 
   await menu(launched, "app.about");
   const about = window.getByTestId("about");
@@ -82,8 +91,8 @@ test("V-5、V-7：缩放每次 5%，所有窗口一起、记在设置里；窗�
   await clickMenuItem(app, "实际大小");
 
   const onTop = () => app.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isAlwaysOnTop());
-  await clickMenuItem(app, "窗口置顶");
+  await clickMenuItem(app, "保持窗口在最前端");
   await expect.poll(onTop).toBe(true);
-  await clickMenuItem(app, "窗口置顶");
+  await clickMenuItem(app, "保持窗口在最前端");
   await expect.poll(onTop).toBe(false);
 });

@@ -20,10 +20,11 @@ export function useDialogs(
   const choose = async (title: string, message: string, choices: Parameters<ChoiceDialogInstance["choose"]>[2], cancelValue: string) =>
     dialog.value ? dialog.value.choose(title, message, choices, cancelValue) : cancelValue;
   return {
-    async confirmUnsaved(title) {
-      return (await choose(t("app.name"), t("confirm.unsaved", { title }), [
-        { label: t("common.save"), value: "save", primary: true },
-        { label: t("common.dontSave"), value: "discard", danger: true },
+    // F-10（同 Typora）：标题「保存」；「保存」「放弃更改」在左，「取消」在右
+    async confirmUnsaved() {
+      return (await choose(t("confirm.unsavedTitle"), t("confirm.unsaved"), [
+        { label: t("common.save"), value: "save", primary: true, left: true },
+        { label: t("common.discardChanges"), value: "discard", left: true },
         { label: t("common.cancel"), value: "cancel" },
       ], "cancel")) as UnsavedChoice;
     },
