@@ -16,7 +16,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && vue-tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run --passWithNoTests",
     "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder --publish never"
+    "predist": "node scripts/installers.mjs clean",
+    "dist": "npm run build && electron-builder --publish never",
+    "postdist": "node scripts/installers.mjs collect"
   },
   "dependencies": {
     "@intlify/core-base": "^11.4.23",

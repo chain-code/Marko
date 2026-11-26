@@ -10,6 +10,7 @@ dist-lib/
 # 新代码的构建产物（docs/architecture.md 1.12 节）
 apps/desktop/out/
 apps/desktop/release/
+安装包/
 test/e2e/results/
 test/visual/.out/
 test/visual/results/

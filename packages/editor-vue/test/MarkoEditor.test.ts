@@ -189,17 +189,30 @@ describe("周边界面", () => {
     expect(current.find(".marko-code-language").exists()).toBe(false);
   });
 
-  it("T-5 光标在表格里时显示工具条；按钮执行表格命令", async () => {
-    const current = open("| a | b |\n| --- | --- |\n| 1 | 2 |\n\nend");
+  it("T-5 光标在表格里时显示工具条（同 Typora：对齐、更多操作、删除表格）；按钮、菜单执行表格命令", async () => {
+    const { ElDropdown } = await import("element-plus");
+    const current = open("| a | b |\n| --- | :-: |\n| 1 | 2 |\n\nend");
     const editor = editorOf(current);
     editor.commands.setTextSelection(3);
     await nextTick();
     const toolbar = current.find(".marko-table-toolbar");
     expect(toolbar.exists()).toBe(true);
-    await toolbar.find('button[aria-label="下方插入行"]').trigger("click");
-    // 新的一行（命令同旧版：格子里放「内容」）
-    expect(current.emitted("update:modelValue")?.at(-1)).toEqual(["| a | b |\n| --- | --- |\n| 内容 | 内容 |\n| 1 | 2 |\n\nend"]);
-    editor.commands.setTextSelection(editor.state.doc.content.size - 2);
+    const labels = toolbar.findAll("button").map((button) => button.attributes("aria-label"));
+    expect(labels).toEqual(["左对齐", "居中对齐", "右对齐", "更多操作", "删除表格"]);
+    // 第一列没写对齐：三个都不按下；第二列居中：居中按下
+    expect(toolbar.findAll(".marko-table-align.is-active")).toHaveLength(0);
+    editor.commands.setTextSelection(7);
+    await nextTick();
+    expect(toolbar.find(".marko-table-align.is-active").attributes("aria-label")).toBe("居中对齐");
+    await toolbar.find('button[aria-label="右对齐"]').trigger("click");
+    expect(current.emitted("update:modelValue")?.at(-1)).toEqual(["| a | b |\n| --- | ---: |\n| 1 | 2 |\n\nend"]);
+    await nextTick();
+    expect(toolbar.find(".marko-table-align.is-active").attributes("aria-label")).toBe("右对齐");
+    // 「更多操作」的菜单：下方插入行（命令同旧版：格子里放「内容」）
+    toolbar.findComponent(ElDropdown).vm.$emit("command", "addTableRowBelow");
+    expect(current.emitted("update:modelValue")?.at(-1)).toEqual(["| a | b |\n| --- | ---: |\n| 内容 | 内容 |\n| 1 | 2 |\n\nend"]);
+    await toolbar.find('button[aria-label="删除表格"]').trigger("click");
+    expect(String(current.emitted("update:modelValue")?.at(-1))).not.toContain("|");
     await nextTick();
     expect(current.find(".marko-table-toolbar").exists()).toBe(false);
   });

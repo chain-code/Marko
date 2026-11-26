@@ -141,7 +141,10 @@ export interface MarkoEditorTexts {
   codeLanguage: string;
   ok: string;
   cancel: string;
-  /** 表格工具条、插入表格的小窗口 */
+  /**
+   * 表格工具条、插入表格的小窗口。
+   * deleteRowShort、deleteColumnShort 是旧版工具条按钮上的字，工具条照 Typora 改成图标和「更多操作」以后不再用；对外接口不变（K-1），留着
+   */
   table: {
     insert: string;
     columns: string;
