@@ -1,0 +1,31 @@
+# 架构不变量（方向；细节以 docs/architecture.md 为准，括号里是节号）
+# 何时读：改进程边界、IPC 接口、路径范围、安全设置、依赖方向、数据归属、主进程的打包时。
+invariants:
+  - name: markdown_is_the_only_format
+    rule: "Markdown 文件是唯一的持久化格式：打开、不改、保存逐字节不变；改一处只影响那一块（1.1、E-1）"
+  - name: roundtrip_structure
+    rule: "任何时刻 parse(serialize(doc)) 和 doc 结构相同；每次事务后 plugins/reconcile.ts 重新解析改到的块，对齐只改结构、不改原文（1.5.5）"
+  - name: single_source
+    rule: "一个解析器（Lezer）、一套高亮、一份主题 CSS、一条渲染管线；编辑、导出、打印、复制为 HTML 都用它们（1.1、1.7）"
+  - name: dependency_direction
+    rule: "依赖只朝 1.4 节的方向：markdown 不碰 DOM、Node、Vue、Electron；editor 不依赖 Vue；main 不引用 markdown、render、editor；renderer 不用 Node 和 Electron（只经 window.marko）。npm run check 里的 dependency-cruiser 检查，循环依赖是错误"
+  - name: data_single_owner
+    rule: "每类数据只有一个主人（1.8 节的表）：文件、设置、最近文件、草稿都归主进程；渲染进程只经预加载脚本暴露的 window.marko 读写"
+  - name: ipc_contract
+    rule: "渲染进程只调 window.marko；每个方法一个 ipcMain.handle 通道（marko:<模块>.<动作>），参数和返回值用 shared 里的 zod schema 校验，不过就拒绝。加通道时 shared 的通道和 schema、main 的处理函数、preload 的暴露、1.9 节的表一起改（1.9）"
+  - name: path_scope
+    rule: "主进程用到的路径都要在 scope.ts 的范围里（用户主动打开过的文件、目录和它们的资源目录），不在就返回 out_of_scope，渲染进程报上来的文档状态也查；插入媒体的原文件另有只读范围，路径由预加载脚本从 File 算出，页面交不了路径字符串（1.10、X-1）"
+  - name: untrusted_document
+    rule: "文档里的 HTML、图表、链接都按不可信内容处理：HTML 经 render/sanitize.ts 过滤；图表只在 sandbox 的 iframe 里画、只经 MessagePort 通信，返回的 SVG 再过滤；外部链接只放行 http、https、mailto（1.1、1.10）"
+  - name: renderer_isolation
+    rule: "渲染进程 contextIsolation、sandbox 打开，nodeIntegration 关闭；will-navigate 和 setWindowOpenHandler 拦下跳转和新窗口；网页权限默认拒绝（permissions.ts）；应用页面和图表沙箱各一套 CSP，写法以 1.10 节为准"
+  - name: electron_fuses
+    rule: "关 RunAsNode、EnableNodeOptionsEnvironmentVariable、EnableNodeCliInspectArguments，开 EnableCookieEncryption、EnableEmbeddedAsarIntegrityValidation、OnlyLoadAppFromAsar（electron-builder.yml、1.10）。只有在打好的包上跑端到端时临时放开 inspect（scripts/e2e-packaged.mjs）"
+  - name: editor_no_desktop
+    rule: "编辑器包只通过 EditorHost 获取资源地址、打开链接、保存图片、渲染图表，能单独在浏览器里用（1.1、K 章）"
+  - name: library_api_stable
+    rule: "根目录的 package.json 同时是编辑器库：导入路径和 API 不变（K-1）；exports 指向 dist-lib/，由 prepare 构建（1.12）"
+  - name: main_bundle_self_contained
+    rule: "主进程的依赖全部打进 out/（electron-vite 的 externalizeDeps 关掉），只有 @parcel/watcher（原生模块）和 @vscode/ripgrep（带可执行文件）外部引用、由 electron-builder.yml 单独带上；build 之后 apps/desktop/scripts/check-main-bundle.mjs 检查没有别的外部引用（R-1）"
+  - name: feature_ids_traceable
+    rule: "features.md 的每个功能编号都能在 architecture.md 第 3 章找到模块；代码注释里的节号、功能编号指这两份文档，不重排；测试名写功能编号（1.1、1.13）"
